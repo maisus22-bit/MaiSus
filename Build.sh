@@ -2,14 +2,15 @@
 # ============================================================================
 #  Maisus - Build.sh
 #
-#  1. Ensambla os dois estagios:
+#  1. Ensambla os tres estagios:
 #        inicio/inicio_minimo.asm  ->  inicio/inimin.mai   (setor 0 / boot)
 #        inicio/inicio.asm         ->  inicio/inicio.mai  (gerenciador)
-#  2. Monta a ISO (sem GRUB, sem isolinux) com os dois ficheiros
+#        nucleo/nucleo.asm         ->  nucleo/0.3.2026    (nucleo)
+#  2. Monta a ISO (sem GRUB, sem isolinux) com os tres ficheiros
 #  3. Lanca o QEMU com a ISO
 #
 #  Nao existe pasta de staging: a ISO e montada com -graft-points, directement
-#  a partir do binario em inicio/.
+#  a partir dos binarios em inicio/ e nucleo/.
 #  Ao fechar a janela do QEMU, este comando termina.
 # ============================================================================
 
@@ -17,8 +18,15 @@ set -euo pipefail
 
 # --- caminhos ---------------------------------------------------------------
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INICIO="$RAIZ/inicio"                  # pasta do fonte e do binario
+INICIO="$RAIZ/inicio"                  # pasta do fonte e do binario dos 2 primeiros estagios
+NUCLEO="$RAIZ/nucleo"                  # pasta do fonte e do binario do nucleo
 ISO="$RAIZ/Maisus.iso"
+
+# --- o numero do build ------------------------------------------------------
+# Vive num sitio so. O nome do binario do nucleo dentro da ISO e o proprio
+# numero do build, por isso mudar esta linha muda o nome do ficheiro procurado
+# no disco: e o inicio.asm que tem de saber que versao se esta a arrancar.
+BUILD="0.3.2026"
 
 # --- nomes ------------------------------------------------------------------
 # sao dois ficheiros separados: um fonte e um binario para cada estagio
@@ -26,7 +34,18 @@ FONTE_MBR="inicio_minimo.asm"     # fonte do setor 0 (MBR): o boot sector
 NOME_MBR="inimin.mai"             # binario: dentro e fora da ISO
 FONTE_GER="inicio.asm"            # fonte do gerenciador de boot
 NOME_GER="inicio.mai"             # binario: dentro e fora da ISO
+FONTE_NUC="nucleo.asm"            # fonte do nucleo
+NOME_NUC="$BUILD"                 # binario: "0.3.2026", dentro e fora da ISO
 DIR_ISO="inicio"                       # pasta dos binarios dentro da ISO
+DIR_NUC="nucleo"                       # pasta do nucleo dentro da ISO
+
+# --- nivel de ISO9660 -------------------------------------------------------
+# 4 = os identificadores vao para o disco tal e qual: minusculas e SEM ";1".
+# Nos niveis 1/2/3 o genisoimage reescreve os nomes, e um nome com dois pontos
+# vira "0_3.2026;1"; no nivel 1 ainda truncava para "0_3.202". Como o
+# inicio_minimo.asm e o inicio.asm procuram os nomes no disco byte a byte, o
+# nivel da ISO e parte do contrato e nao uma opcao estetica.
+NIVEL_ISO=4
 
 # aviso do nasm que nao e erro: codigo de 16 bits com enderecos absolutos
 # num binario plano da sempre este aviso. Todos os outros continuam a parar
@@ -55,11 +74,12 @@ verificar_ferramentas() {
 }
 
 # --- 1. ensamblar ------------------------------------------------------------
-#   nasm nao tem como renomear a saida: compilamos directamente para inimin.mai
+#   nasm nao tem como renomear a saida: compilamos directamente para o nome final
+#   A pasta entra como argumento porque o nucleo nao vive em inicio/.
 ensamblar() {
-    local fonte="$1" nome="$2"
-    local src="$INICIO/$fonte"
-    local out="$INICIO/$nome"
+    local pasta="$1" fonte="$2" nome="$3"
+    local src="$pasta/$fonte"
+    local out="$pasta/$nome"
     local log="" avisos ignorados
 
     printf '  nasm  %-24s -> %s\n' "$fonte" "$nome"
@@ -94,22 +114,27 @@ montar_iso() {
     local alvo_ger="$DIR_ISO/$NOME_GER"
     local rel_mbr="$INICIO/$NOME_MBR"      # caminho no disco
     local rel_ger="$INICIO/$NOME_GER"
+    local alvo_nuc="$DIR_NUC/$NOME_NUC"
+    local rel_nuc="$NUCLEO/$NOME_NUC"
 
     rm -f "$ISO"
-    printf '  iso  %s\n' "$alvo_mbr + $alvo_ger -> $(basename "$ISO")"
+    printf '  iso  %s\n' "$alvo_mbr + $alvo_ger + $alvo_nuc -> $(basename "$ISO")"
 
     # -graft-points     monta a ISO do fonte, sem pasta de staging
     # -b                boot image -> inicio/inimin.mai
     # -no-emul-boot     a BIOS carrega os sectores tal e qual
     # -boot-load-size   4 sectores = 2048 bytes de espaco para o loader
     # (o genisoimage gera o boot.catalog sozinho: nao ha GRUB nem isolinux)
+    # -iso-level        os nomes vao para o disco tal e qual (ver NIVEL_ISO)
     ( cd "$RAIZ" && "$GENISOIMAGE" -quiet -o "$ISO" \
         -graft-points \
+        -iso-level "$NIVEL_ISO" \
         -b "$alvo_mbr" \
         -no-emul-boot -boot-load-size 4 \
         -J -R -V "MAISUS" \
         "/$alvo_mbr=$rel_mbr" \
-        "/$alvo_ger=$rel_ger" ) 2>/dev/null \
+        "/$alvo_ger=$rel_ger" \
+        "/$alvo_nuc=$rel_nuc" ) 2>/dev/null \
         || erro "ERRO" "genisoimage falhou"
 
     [ -f "$ISO" ] || erro "ERRO" "ISO nao foi criada: $ISO"
@@ -131,13 +156,14 @@ correr() {
 
 # --- main --------------------------------------------------------------------
 main() {
-    printf '\n%s==> Maisus Build%s\n\n' "$TITULO" "$FIM"
+    printf '\n%s==> Maisus Build %s%s\n\n' "$TITULO" "$BUILD" "$FIM"
 
     verificar_ferramentas
 
     printf '%s[1/3] a ensamblar%s\n' "$TITULO" "$FIM"
-    ensamblar "$FONTE_MBR" "$NOME_MBR"
-    ensamblar "$FONTE_GER" "$NOME_GER"
+    ensamblar "$INICIO" "$FONTE_MBR" "$NOME_MBR"
+    ensamblar "$INICIO" "$FONTE_GER" "$NOME_GER"
+    ensamblar "$NUCLEO" "$FONTE_NUC" "$NOME_NUC"
     printf '\n'
 
     printf '%s[2/3] a montar a ISO%s\n' "$TITULO" "$FIM"
