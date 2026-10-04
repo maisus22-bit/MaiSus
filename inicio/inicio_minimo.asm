@@ -2,7 +2,7 @@
 ;  Maisus - inicio_minimo.asm
 ;  Setor 0 (MBR) - Carregado pela BIOS em 0x7C00
 ;
-;  missao: limpar o ecra, localizar /INICIO/INICIO.MAI dentro da ISO9660 e
+;  missao: limpar o ecra, localizar /inicio/inicio.mai dentro da ISO9660 e
 ;          entregar-lhe o controlo em 0xA000:0x0000.
 ;  saida: inimin.mai
 ; ============================================================================
@@ -33,11 +33,19 @@ MAX_DESCR    equ 16           ; quantos descritores se procuram no maximo
 ; 43 44 30 30 ('C','D','0','0') em ordem de bytes = 0x30304443
 SIG_CD001    equ 0x30304443
 
-ESTAGIO_SET  equ 4            ; sectors do estagio (4 x 2048 = 8 KiB)
+; ---------------------------------------------------------------------------
+; A ISO e montada com -iso-level 4 (ver Build.sh), e isso tem uma consequencia
+; que este sector tem de conhecer: em nivel 4 o nome verdadeiro e gravado tal
+; e qual, em minusculas e SEM a versao ";1". Nos niveis 1/2/3 o que vai para o
+; disco seria "INICIO" e "INICIO.MAI;1", e em nivel 1 o nome ainda seria
+; truncado para 8.3. Por isso os nomes aqui em baixo estao em minusculas e sem
+; ";1": se algum dia a ISO mudar de nivel, e estes dois pontos que falham.
+; ---------------------------------------------------------------------------
+ESTAGIO_SET  equ 3            ; sectors do estagio (3 x 2048 = 6 KiB, ate 0xB800)
 N_UNIDADES   equ 3            ; entradas na tabela de unidades
 
-DIR_N        equ 6            ; "INICIO"
-FIC_N        equ 12           ; "INICIO.MAI;1"
+DIR_N        equ 6            ; "inicio"
+FIC_N        equ 10           ; "inicio.mai"
 
 ; ---------------------------------------------------------------------------
 ; A BIOS usa a pilha que o sector deixa e empurra nela os seus registos
@@ -309,8 +317,9 @@ unidades:    db 0xE0, 0xE0, 0x80  ; DL da BIOS, CD, HD
 lba:         dd 0x00000000    ; sector a ler (32 bits, pouco endian)
 descr_restam: db 0x00          ; descritores de volume ainda por ver
 
-DIR_INICIO:  db "INICIO", 0           ; 7 bytes
-FIC_INICIO:  db "INICIO.MAI;1", 0     ; 13 bytes
+; nomes em nivel 4: minusculas e sem ";1" (ver a nota sobre ESTAGIO_SET)
+DIR_INICIO:  db "inicio", 0           ; 7 bytes
+FIC_INICIO:  db "inicio.mai", 0       ; 11 bytes
 
 ; pacote de leitura da INT 13h (16 bytes, montado uma vez aqui):
 ;   0 tamanho | 1 reservado | 2-3 sectores | 4-5 offset | 6-7 segmento
