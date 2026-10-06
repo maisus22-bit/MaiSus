@@ -5,9 +5,15 @@
 ;  Carregado por inimin.mai da ISO (/inicio/inicio.mai) para BASE:0x0000.
 ;  Convencao de entrada: CS=IP=BASE, DS=BASE, ES=0x0000.
 ;
-;  missao: escrever a versao do build, carregar o nucleo da ISO para
-;          0xC000:0x0000, esperar 4 segundos e entregar-lhe o controlo.
-;  saida: nucleo (0.3.2026)
+;  missao: escrever a versao do build, esperar 4 segundos, carregar da ISO o
+;          nucleo (/nucleo/0.4.2026) e o driver de video (/drivers/video.dr), e
+;          entregar o controlo ao nucleo.
+;  saida: nucleo (0.4.2026)
+;
+;  O nucleo entra sem levar nada na mao: os dois ficheiros ja estao na memoria
+;  nos sitios onde ele vai buscar (as constantes de nucleo.asm). A espera de 4
+;  segundos e feita aqui, depois de escrever o numero do build no ecra: o
+;  controlo so passa ao nucleo quando a mensagem ja foi mostrada.
 ; ============================================================================
 
 BITS 16
@@ -19,18 +25,29 @@ SEG_VIDEO  equ 0xB800          ; inicio do buffer de texto
 ATRIB      equ 0x0E            ; amarelo claro sobre preto
 
 ; Endereco LINEAR onde o nucleo e carregado, e o segmento correspondente.
-; Sao dois numeros diferentes e confundir-os e o erro classico do modo real:
+; Sao dois numeros diferentes e confundir-los e o erro classico do modo real:
 ; o segmento 0xC00 cobre 0xC000, mas o segmento 0xC000 cobre 0xC0000 (768 KiB).
 ; O nucleo carrega com NUC_SEG:0x0000 e o codigo dele e ligado para NUC_SEG.
 NUC_LIN    equ 0xC000          ; endereco linear do nucleo
 NUC_SEG    equ NUC_LIN >> 4    ; 0xC00
+
+; O driver de video vai para 0xE000, que nao choca com o nucleo (que no maximo
+; ocupa 32 KiB a partir de 0xC000, ate 0xD3FF). O driver chama-se a si mesmo
+; pelo segmento 0xE00, e por isso que a imagem dele e ligada para esse segmento.
+DRV_LIN    equ 0xE000          ; endereco linear do driver
+DRV_SEG    equ DRV_LIN >> 4    ; 0xE00
 
 BLOCO      equ 2048           ; bytes por sector logico (ISO9660 / El Torito)
 PVD_LBA    equ 16             ; a norma obriga o 1.o descritor a estar aqui
 PVD_TIPO   equ 1              ; tipo 1 = volume descriptor primario
 MAX_DESCR  equ 16             ; quantos descritores se procuram no maximo
 NUC_SET    equ 16             ; sectores maxima do nucleo (16 x 2048 = 32 KiB)
+DRV_SET    equ 2              ; sectores maxima do driver (2 x 2048 = 4 KiB)
 N_UNIDADES equ 3              ; unidades na tabela de tentativas do sector 0
+
+; Quanto tempo o numero do build fica no ecra antes de o controlo passar ao
+; nucleo (em microssegundos).
+ESPERA_US  equ 4000000        ; 4 segundos
 
 ; o descritor traz o tipo no byte 0 e a assinatura "CD001" nos bytes 1-5.
 ; Sao comparados 4 desses 5 bytes, lidos como dword a partir do offset 1:
@@ -40,20 +57,6 @@ SIG_CD001  equ 0x30304443
 ; Sector ISO de trabalho (o mesmo endereco para o PVD e para os dois
 ; directorios, por isso so se define uma vez).
 BUF        equ 0x8000          ; livre: o sector 0 vive em 0x7C00-0x8000
-
-; ---------------------------------------------------------------------------
-; A espera de 4 segundos e pedida a BIOS com a INT 15h AH=86h, que espera
-; CX:DX microssegundos. Nao se programou o PIT para isso de proposito:
-;
-;   - o PIT do contador 0 ja esta ao servico da IRQ do timer da propria BIOS,
-;     mexer nele durante o arranque e mexer no relogio que esta a medir-nos;
-;   - a INT 15h/86 e um servico documentado (AT e posteriores, incluindo a
-;     SeaBIOS do QEMU), devolve quando passou, e cabe numa unica instrucao.
-;
-; So se cairia em esperar a mao se a BIOS nao tivesse esse servico: nesse caso
-; entrava um laco sobre a INT 1Ah AH=00h, que devolve os tiques desde a meia-noite.
-; ---------------------------------------------------------------------------
-ESPERA_US  equ 4000000         ; 4 segundos em microssegundos
 
 ; ---------------------------------------------------------------------------
 ; A pilha nao pode estar em 0xB800-0xC000: essa e a janela do buffer de texto e
@@ -76,7 +79,7 @@ start:
     int 0x10
 
     ; --- escreve a versao na primeira linha --------------------------------
-    ; escreve-se directamente no buffer de texto: cada celula ocupa 2 bytes
+    ; escreve-se diretamente no buffer de texto: cada celula ocupa 2 bytes
     ; (caracter + atributo). Nao se usa a INT 10h AH=13h porque a implementacao
     ; dessa funcao varia entre BIOS e aqui nao devolve nada.
     mov ax, SEG_VIDEO
@@ -90,8 +93,27 @@ start:
     stosw                     ; caracter + atributo; avanca 2 bytes em DI
     xor ax, ax
     loop .escreve
-    mov ax, SEG_VIDEO
-    mov es, ax                ; devolve ES ao segmento do buffer de texto
+
+    ; --- espera 4 segundos -------------------------------------------------
+    ; A espera e deste estagio: o ecra esta em modo texto com o numero do build
+    ; escrito acima, e so depois de o mostrar durante 4 segundos e que o
+    ; controlo passa ao nucleo.
+    ;
+    ; A espera e pedida a BIOS com a INT 15h AH=86h, que espera CX:DX
+    ; microssegundos (CX = metade alta). Nao se programa o PIT para isso de
+    ; proposito: o PIT do contador 0 ja esta ao servico da IRQ do timer da
+    ; propria BIOS, e mexer nele durante o arranque e mexer no relogio que nos
+    ; esta a medir. A INT 15h/86 e um servico documentado (AT e posteriores,
+    ; incluindo a SeaBIOS do QEMU): devolve quando o tempo passou e cabe numa
+    ; unica instrucao.
+    ;
+    ; As interrupcoes ficam ligadas durante a espera: a implementacao deste
+    ; servico pode usar a IRQ do timer, e uma espera com IF=0 seria um alvo
+    ; movel.
+    mov cx, ESPERA_US >> 16
+    mov dx, ESPERA_US & 0xFFFF
+    mov ah, 0x86
+    int 0x15
 
 ; ---------------------------------------------------------------------------
 ; A partir daqui comeca a caminhada pela ISO9660, a mesma que o sector 0 faz.
@@ -114,137 +136,15 @@ start:
     ; CD (0xE0), depois o primeiro disco rigido (0x80), depois o floppy A:
     mov byte [unidade], 0
 
-    ; --- procurar o volume descriptor primario ---------------------------
-    ; nao se assume um LBA fixo: comeca-se no sector 16 (exigido pela norma) e
-    ; percorre-se a cadeia de descritores ate aparecer o tipo 1 com CD001
-    mov dword [lba], PVD_LBA
-    mov byte [descr_restam], MAX_DESCR
-procurar_pvd:
-    mov cx, 1               ; 1 sector de 512 = 2048 bytes = 1 bloco ISO
-    xor bx, bx
-    mov ax, SEG_BUF
-    mov es, ax
-    lea bp, [lba]           ; 32 bits, pouco endian
-    call ler
+    ; --- o nucleo: /nucleo/<numero do build> ------------------------------
+    ; O nome do ficheiro e o proprio numero do build, e a versao do nucleo e
+    ; uma constante deste ficheiro: mudar o build e mudar esta string.
+    call ficheiro_nucleo
     jc  falha
 
-    cmp byte [BUF], PVD_TIPO
-    jne proximo_descr       ; sector sem um descritor de volume: ignora
-    cmp dword [BUF + 1], SIG_CD001
-    je  pvd_pronto
-
-proximo_descr:
-    inc dword [lba]
-    dec byte [descr_restam]
-    jnz procurar_pvd
-    jmp falha               ; nenhum descritor primario em MAX_DESCR sectores
-
-pvd_pronto:
-    ; --- ler o directorio raiz (o extent esta no registo do PVD) ---------
-    mov cx, 1
-    xor bx, bx
-    mov ax, SEG_BUF
-    mov es, ax
-    lea bp, [BUF + 158]
-    call ler
+    ; --- o driver de video: /drivers/video.dr ------------------------------
+    call ficheiro_driver
     jc  falha
-
-    ; --- procurar o directorio 'nucleo' no directorio raiz --------------
-    mov bp, BUF
-    mov bx, BLOCO           ; bytes por percorrer ate ao fim do bloco
-procura_raiz:
-    test bx, bx
-    jz  falha              ; sem mais registros
-    cmp byte [bp], 0
-    jz  falha              ; terminador de sector
-    cmp byte [bp + 32], DIR_N
-    je compara_raiz
-proximo_raiz:
-    mov al, [bp]            ; comprimento do registro
-    add bp, ax
-    sub bx, ax
-    jmp procura_raiz
-compara_raiz:
-    test byte [bp + 25], 2
-    jz proximo_raiz       ; bit 1 das flags = e um directorio
-    mov cx, DIR_N
-    lea si, [bp + 33]      ; identificador do registro
-    mov di, DIR_NUCLEO
-compara_raiz_l:
-    mov al, [si]
-    cmp al, [di]
-    jne proximo_raiz
-    inc si
-    inc di
-    loop compara_raiz_l
-
-    ; --- ler o directorio /nucleo ---------------------------------------
-    mov cx, 1
-    xor bx, bx
-    mov ax, SEG_BUF
-    mov es, ax
-    lea bp, [bp + 2]
-    call ler
-    jc  falha
-
-    ; --- procurar o ficheiro do build corrente -------------------------
-    ; o nome do ficheiro e o proprio numero do build: nucleo/0.3.2026. Como o
-    ; Build.sh monta a ISO em -iso-level 4, o identificador no disco e o nome
-    ; tal e qual, em minusculas e sem a versao ";1".
-    mov bp, BUF
-    mov bx, BLOCO
-procura_fic:
-    test bx, bx
-    jz  falha
-    cmp byte [bp], 0
-    jz  falha
-    cmp byte [bp + 32], FIC_N
-    je compara_fic
-proximo_fic:
-    mov al, [bp]
-    add bp, ax
-    sub bx, ax
-    jmp procura_fic
-compara_fic:
-    mov cx, FIC_N
-    lea si, [bp + 33]
-    mov di, FIC_NUCLEO
-compara_fic_l:
-    mov al, [si]
-    cmp al, [di]
-    jne proximo_fic
-    inc si
-    inc di
-    loop compara_fic_l
-
-    ; --- carregar o nucleo em SEG_NUC:0x0000 ----------------------------
-    mov bx, [bp + 10]       ; tamanho do ficheiro em bytes (LE)
-    add bx, BLOCO - 1       ; arredonda para cima
-    shr bx, 11              ; bytes / 2048 = sectores
-    cmp bx, NUC_SET
-    jbe carregar_ok
-    mov bx, NUC_SET         ; o nucleo nao passa de 32 KiB
-carregar_ok:
-    jz  falha               ; ficheiro vazio
-    mov cx, bx
-    xor bx, bx
-    mov ax, NUC_SEG
-    mov es, ax
-    lea bp, [bp + 2]        ; extent (LBA de 32 bits, LE)
-    call ler
-    jc  falha
-
-; ---------------------------------------------------------------------------
-; esperar 4 segundos
-; ---------------------------------------------------------------------------
-;   INT 15h AH=86h  CX:DX = microssegundos a esperar (CX = metade alta)
-;
-; As interrupcoes ficam ligadas durante a espera: a implementacao deste servico
-; pode usar a IRQ do timer, e uma espera com IF=0 seria um alvo movel.
-    mov cx, ESPERA_US >> 16
-    mov dx, ESPERA_US & 0xFFFF
-    mov ah, 0x86
-    int 0x15
 
 ; ---------------------------------------------------------------------------
 ; entregar o controlo ao nucleo
@@ -262,6 +162,222 @@ carregar_ok:
     mov ds, ax
     mov es, ax
     jmp NUC_SEG:0x0000
+
+; ---------------------------------------------------------------------------
+; ficheiro_nucleo: procura /nucleo/<build> no volume e carrega-o em NUC_SEG
+;   saida: CF=1 se nao encontrar ou se a leitura falhar
+; ---------------------------------------------------------------------------
+ficheiro_nucleo:
+    mov si, DIR_NUCLEO
+    mov cx, DIR_N
+    call abrir_raiz
+    jc  .falha
+    call ler_directorio
+    jc  .falha
+    mov si, FIC_NUCLEO
+    mov cx, FIC_N
+    call achar_ficheiro
+    jc  .falha
+    mov ax, NUC_SEG
+    mov [dest_seg], ax
+    mov word [max_set], NUC_SET
+    jmp carregar_ficheiro
+.falha:
+    stc
+    ret
+
+; ---------------------------------------------------------------------------
+; ficheiro_driver: procura /drivers/video.dr no volume e carrega-o em DRV_SEG
+;   saida: CF=1 se nao encontrar ou se a leitura falhar
+; ---------------------------------------------------------------------------
+ficheiro_driver:
+    mov si, DIR_MOTOR
+    mov cx, DIR_M
+    call abrir_raiz
+    jc  .falha
+    call ler_directorio
+    jc  .falha
+    mov si, FIC_MOTOR
+    mov cx, FIC_M
+    call achar_ficheiro
+    jc  .falha
+    mov ax, DRV_SEG
+    mov [dest_seg], ax
+    mov word [max_set], DRV_SET
+    jmp carregar_ficheiro
+.falha:
+    stc
+    ret
+
+; ---------------------------------------------------------------------------
+; abrir_raiz: procura um directorio no directorio raiz do volume
+;   entrada: SI = o nome do directorio, CX = o comprimento do nome
+;   saida:   BP = o endereco do registo encontrado no BUF | CF=1 se nao existe
+;
+;   Chama ler_pvd porque o extent do directorio raiz esta dentro do descritor
+;   de volume, e o BUF ja foi entretanto reescrito por outras leituras.
+;
+;   O par SI/CX com o nome e guardado em memoria antes das leituras: tanto
+;   ler_pvd como ler mexem em SI e em CX, e procura_reg precisa de os receber
+;   intactos. Sem este provisoio o nome procurado era o endereco do DAP com o
+;   comprimento 1, e o directorio nunca era encontrado.
+; ---------------------------------------------------------------------------
+abrir_raiz:
+    mov [nome_proc], si
+    mov [nome_tam], cx
+
+    call ler_pvd
+    jc  .falha
+
+    ; o extent do directorio raiz esta no offset 158 do descritor
+    mov cx, 1               ; 1 sector de 512 = 2048 bytes = 1 bloco ISO
+    xor bx, bx
+    mov ax, SEG_BUF
+    mov es, ax
+    mov bp, BUF + 158
+    call ler
+    jc  .falha
+
+    ; agora o directorio raiz esta no BUF: procura-se la dentro o nome
+    mov bp, BUF
+    mov bx, BLOCO           ; bytes por percorrer ate ao fim do bloco
+    mov si, [nome_proc]
+    mov cx, [nome_tam]
+    jmp procura_reg         ; devolve BP (o registo) e o CF
+.falha:
+    stc
+    ret
+
+; ---------------------------------------------------------------------------
+; ler_directorio: le para o BUF o directorio cujo registo esta em BP
+;   saida: CF=1 se a leitura falhar
+; ---------------------------------------------------------------------------
+ler_directorio:
+    mov cx, 1
+    xor bx, bx
+    mov ax, SEG_BUF
+    mov es, ax
+    add bp, 2               ; o extent do directorio esta no offset 2 do registo
+    call ler
+    ret
+
+; ---------------------------------------------------------------------------
+; achar_ficheiro: procura um ficheiro no directorio que esta no BUF
+;   entrada: SI = o nome, CX = o comprimento do nome
+;   saida:   BP = o endereco do registo | CF=1 se nao existe
+; ---------------------------------------------------------------------------
+achar_ficheiro:
+    mov bp, BUF
+    mov bx, BLOCO
+    jmp procura_reg
+
+; ---------------------------------------------------------------------------
+; procura_reg: percorre o directorio que esta no BUF a procura de um registo
+;             cujo identificador (offset 32) seja igual a [SI], com [CX] bytes
+;   entrada: BP = inicio do bloco, BX = quantos bytes ha para percorrer,
+;            SI = o nome procurado, CX = o comprimento do nome
+;   saida:   BP = o endereco do registo | CF=1 se nao existe
+;
+;   O nome procurado e o comprimento sao copiados para duas variaveis porque o
+;   laco precisa deles outra vez a cada registo, e a comparacao dos bytes leva
+;   o CX a zero.
+; ---------------------------------------------------------------------------
+procura_reg:
+    mov [nome_proc], si
+    mov [nome_tam], cx
+.loop:
+    test bx, bx
+    jz  .nao                ; sem mais registros
+    cmp byte [bp], 0
+    jz  .nao                ; terminador de sector
+    mov cl, [nome_tam]
+    cmp byte [bp + 32], cl ; o identificador tem o comprimento certo?
+    je  .achou
+.proximo:
+    mov al, [bp]            ; comprimento do registro
+    xor ah, ah              ; AX = comprimento (so AL foi escrito)
+    add bp, ax
+    sub bx, ax
+    jmp .loop
+.achou:
+    push si
+    push bx
+    mov si, bp
+    add si, 33              ; identificador do registro
+    mov di, [nome_proc]
+    mov cx, [nome_tam]
+.compara:
+    mov al, [si]
+    cmp al, [di]
+    jne .desistir
+    inc si
+    inc di
+    loop .compara
+    pop bx
+    pop si
+    clc
+    ret
+.desistir:
+    pop bx
+    pop si
+    jmp .proximo
+.nao:
+    stc
+    ret
+
+; ---------------------------------------------------------------------------
+; carregar_ficheiro: carrega em [dest_seg]:0x0000 o ficheiro do registo em BP
+;   entrada: BP = o registo do directorio (offset 10 = tamanho em bytes,
+;            offset 2 = extent), [dest_seg] = o segmento de destino,
+;            [max_set] = quantos sectores se podem ler
+;   saida:   CF=1 se a leitura falhar
+; ---------------------------------------------------------------------------
+carregar_ficheiro:
+    mov bx, [bp + 10]       ; tamanho do ficheiro em bytes (LE)
+    add bx, BLOCO - 1       ; arredonda para cima
+    shr bx, 11              ; bytes / 2048 = sectores
+    cmp bx, [max_set]
+    jbe .ok
+    mov bx, [max_set]       ; corta ao maximo permitido
+.ok:
+    test bx, bx             ; o teste tem de ser sobre BX, nao sobre as flags
+    jz  falha               ; do cmp de cima: um ficheiro com um numero exacto
+                            ; de sectores (BX == max_set) punha ZF=1 e falhava
+    mov cx, bx
+    xor bx, bx
+    mov ax, [dest_seg]
+    mov es, ax
+    add bp, 2                ; o extent do ficheiro esta no offset 2 do registo
+    call ler
+    jc  falha
+    ret
+
+; ---------------------------------------------------------------------------
+; ler_pvd: procura o descritor de volume primario e le-o para o BUF
+;   saida: CF=1 se nao aparecer em MAX_DESCR sectores
+; ---------------------------------------------------------------------------
+ler_pvd:
+    mov dword [lba], PVD_LBA
+    mov byte [descr_restam], MAX_DESCR
+.procurar:
+    mov cx, 1               ; 1 sector de 512 = 2048 bytes = 1 bloco ISO
+    xor bx, bx
+    mov ax, SEG_BUF
+    mov es, ax
+    lea bp, [lba]           ; 32 bits, pouco endian
+    call ler
+    jc  .falha
+    cmp byte [BUF], PVD_TIPO
+    jne .proximo            ; sector sem um descritor de volume: ignora
+    cmp dword [BUF + 1], SIG_CD001
+    ret                     ; sao iguais, portanto o "cmp" deixou CF=0
+.proximo:
+    inc dword [lba]
+    dec byte [descr_restam]
+    jnz .procurar
+.falha:
+    stc
+    ret
 
 ; ---------------------------------------------------------------------------
 ; ler: le sectores da ISO com a INT 13h extendida (AH=42h)
@@ -298,7 +414,7 @@ ler:
 
 ; ---------------------------------------------------------------------------
 ; se a caminhada pela ISO falhar, o ecra fica vermelho e paramos
-; (aqui as interrupcoes ainda estao ligadas: o "cli" fica mais abaixo, na espera)
+; (aqui as interrupcoes ainda estao ligadas: o "hlt" precisa delas)
 ; ---------------------------------------------------------------------------
 falha:
     mov ax, SEG_VIDEO
@@ -320,11 +436,22 @@ unidades:    db 0xE0, 0x80, 0x00  ; CD, primeiro HD, floppy A:
 lba:         dd 0x00000000
 descr_restam: db 0x00
 
+nome_proc:   dw 0x0000        ; o nome que procura_reg esta a procurar
+nome_tam:    dw 0x0000
+dest_seg:    dw 0x0000        ; segmento de destino de carregar_ficheiro
+max_set:     dw 0x0000        ; sectores maxima de carregar_ficheiro
+
 DIR_NUCLEO:  db "nucleo", 0          ; 7 bytes
-FIC_NUCLEO:  db "0.3.2026", 0        ; 9 bytes
+FIC_NUCLEO:  db "0.4.2026", 0        ; 9 bytes
 
 DIR_N        equ 6
-FIC_N        equ 8                    ; "0.3.2026"
+FIC_N        equ 8                    ; "0.4.2026"
+
+DIR_MOTOR:   db "drivers", 0          ; 8 bytes
+FIC_MOTOR:   db "video.dr", 0         ; 9 bytes
+
+DIR_M        equ 7
+FIC_M        equ 8                    ; "video.dr"
 
 DAP:
 DAP_size:    db 0x10
@@ -336,9 +463,13 @@ dap_lba:     dq 0x0000000000000000
 
 SEG_BUF      equ BUF >> 4
 
-VERSAO:   db "Maisus v0.1 Build 0.3.2026"
+VERSAO:   db "Maisus v0.1 Build 0.4.2026"
 VERSAO_N  equ $ - VERSAO
 
 ; ---------------------------------------------------------------------------
-; o texto fica no fim do ficheiro (nao ha padding: este estagio cresce)
+; Este estagio e carregado em 3 sectores (6 KiB, de 0xA000 a 0xB7FF, ate ao
+; comeco do buffer de texto). O "times" faz o nasm falhar se o codigo passar
+; dai: sem ele o inicio_minimo.asm carregava este ficheiro a meio e o nucleo
+; arrancava de um codigo truncado.
 ; ---------------------------------------------------------------------------
+    times 0x1800 - ($ - $$) db 0x00
