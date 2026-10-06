@@ -178,6 +178,7 @@ procura_raiz:
     je  compara_raiz
 proximo_raiz:
     mov al, [bp]            ; comprimento do registro
+    xor ah, ah              ; AX = comprimento (so AL foi escrito)
     add bp, ax
     sub bx, ax
     jmp procura_raiz
@@ -217,6 +218,7 @@ procura_fic:
     je  compara_fic
 proximo_fic:
     mov al, [bp]            ; comprimento do registro
+    xor ah, ah              ; AX = comprimento (so AL foi escrito)
     add bp, ax
     sub bx, ax
     jmp procura_fic
@@ -238,9 +240,12 @@ compara_fic_l:
     shr bx, 11              ; bytes / 2048 = sectores
     cmp bx, ESTAGIO_SET
     jbe carregar_ok
-    mov bx, ESTAGIO_SET     ; inicio.mai nao passa de 8 KiB
+    mov bx, ESTAGIO_SET     ; inicio.mai nao passa de 6 KiB
 carregar_ok:
-    jz  falha               ; ficheiro vazio
+    test bx, bx             ; o teste tem de ser sobre BX, nao sobre as flags
+    jz  falha               ; do cmp de cima: inicio.mai ocupa um numero exacto
+                            ; de sectores (BX == ESTAGIO_SET) punha ZF=1 e o
+                            ; arranque falhava sempre
     mov cx, bx
     xor bx, bx
     mov ax, SEG_EST
