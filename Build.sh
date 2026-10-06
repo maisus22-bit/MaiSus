@@ -2,16 +2,22 @@
 # ============================================================================
 #  Maisus - Build.sh
 #
-#  1. Ensambla os tres estagios:
+#  1. Ensambla os quatro estagios:
 #        inicio/inicio_minimo.asm  ->  inicio/inimin.mai   (setor 0 / boot)
 #        inicio/inicio.asm         ->  inicio/inicio.mai  (gerenciador)
-#        nucleo/nucleo.asm         ->  nucleo/0.3.2026    (nucleo)
-#  2. Monta a ISO (sem GRUB, sem isolinux) com os tres ficheiros
+#        nucleo/nucleo.asm         ->  nucleo/0.4.2026    (nucleo)
+#        drivers/video.asm         ->  drivers/video.dr    (driver de video)
+#  2. Monta a ISO (sem GRUB, sem isolinux) com os quatro ficheiros
 #  3. Lanca o QEMU com a ISO
 #
 #  Nao existe pasta de staging: a ISO e montada com -graft-points, directement
-#  a partir dos binarios em inicio/ e nucleo/.
+#  a partir dos binarios em inicio/, nucleo/ e drivers/.
 #  Ao fechar a janela do QEMU, este comando termina.
+#
+#  O numero do build vive em tres sitios que tem de concordar: aqui, no nome do
+#  ficheiro que o inicio.asm procura dentro da ISO (FIC_NUCLEO) e na string que
+#  o nucleo escreve no ecra (VERSAO, em nucleo.asm). O script nao os arruma:
+#  muda-se a variavel BUILD e trata-se de actualizar os outros dois.
 # ============================================================================
 
 set -euo pipefail
@@ -20,13 +26,14 @@ set -euo pipefail
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INICIO="$RAIZ/inicio"                  # pasta do fonte e do binario dos 2 primeiros estagios
 NUCLEO="$RAIZ/nucleo"                  # pasta do fonte e do binario do nucleo
+MOTOR="$RAIZ/drivers"                  # pasta dos drivers
 ISO="$RAIZ/Maisus.iso"
 
 # --- o numero do build ------------------------------------------------------
 # Vive num sitio so. O nome do binario do nucleo dentro da ISO e o proprio
 # numero do build, por isso mudar esta linha muda o nome do ficheiro procurado
 # no disco: e o inicio.asm que tem de saber que versao se esta a arrancar.
-BUILD="0.3.2026"
+BUILD="0.4.2026"
 
 # --- nomes ------------------------------------------------------------------
 # sao dois ficheiros separados: um fonte e um binario para cada estagio
@@ -35,9 +42,12 @@ NOME_MBR="inimin.mai"             # binario: dentro e fora da ISO
 FONTE_GER="inicio.asm"            # fonte do gerenciador de boot
 NOME_GER="inicio.mai"             # binario: dentro e fora da ISO
 FONTE_NUC="nucleo.asm"            # fonte do nucleo
-NOME_NUC="$BUILD"                 # binario: "0.3.2026", dentro e fora da ISO
+NOME_NUC="$BUILD"                 # binario: "0.4.2026", dentro e fora da ISO
+FONTE_DRV="video.asm"             # fonte do driver de video
+NOME_DRV="video.dr"               # binario: dentro e fora da ISO
 DIR_ISO="inicio"                       # pasta dos binarios dentro da ISO
 DIR_NUC="nucleo"                       # pasta do nucleo dentro da ISO
+DIR_MOTOR="drivers"                    # pasta dos drivers dentro da ISO
 
 # --- nivel de ISO9660 -------------------------------------------------------
 # 4 = os identificadores vao para o disco tal e qual: minusculas e SEM ";1".
@@ -73,9 +83,28 @@ verificar_ferramentas() {
     [ "$falta" -eq 0 ] || erro "INSTALA" "sudo apt install -y nasm genisoimage qemu-system-x86"
 }
 
+# --- 1b. o mapa da memoria ----------------------------------------------------
+#   O inicio.mai carrega os dois ficheiros em enderecos fixos, que sao
+#   constantes nos fontes (NUC_SEG e DRV_SEG em inicio.asm, DRV_LIN em
+#   nucleo.asm). Se a imagem de um deles mudar de tamanho, o inicio.mai passa a
+#   ler sectores a mais ou a menos e o nucleo vai ler dados estruturados a esmo -
+#   por isso o mapa e impresso todas as vezes, e nao so no fonte.
+mapa() {
+    local n d
+    n="$(stat -c%s "$NUCLEO/$NOME_NUC")"
+    d="$(stat -c%s "$MOTOR/$NOME_DRV")"
+    printf '  mapa  %-12s %4s bytes  0x%04X-0x%04X  (%s sectores)\n' \
+        "$NOME_NUC" "$n" "$((0xC000))" \
+        "$((0xC000 + ((n + 2047) / 2048) * 2048 - 1))" "$(((n + 2047) / 2048))"
+    printf '  mapa  %-12s %4s bytes  0x%04X-0x%04X  (%s sectores)\n' \
+        "$NOME_DRV" "$d" "$((0xE000))" \
+        "$((0xE000 + ((d + 2047) / 2048) * 2048 - 1))" "$(((d + 2047) / 2048))"
+}
+
 # --- 1. ensamblar ------------------------------------------------------------
 #   nasm nao tem como renomear a saida: compilamos directamente para o nome final
-#   A pasta entra como argumento porque o nucleo nao vive em inicio/.
+#   A pasta entra como argumento porque o nucleo nao vive em inicio/ nem os
+#   drivers em nucleo/.
 ensamblar() {
     local pasta="$1" fonte="$2" nome="$3"
     local src="$pasta/$fonte"
@@ -87,7 +116,11 @@ ensamblar() {
 
     # -w+all activa todos os avisos. Um sector truncado (ex: porta 0x3DA
     # reduzida a 0xDA) assembla sem erro e sobe na mesma -> aviso = falha.
-    if ! log="$("$NASM" -f bin -w+all "$src" -o "$out" 2>&1)"; then
+    #
+    # -I "$pasta" e para o "%include": o nasm nao procura ficheiros incluidos ao
+    # lado do fonte, so no directorio de trabalho, e o nucleo inclui a fonte
+    # dos caracteres (nucleo/fonte.inc).
+    if ! log="$("$NASM" -f bin -w+all -I "$pasta" "$src" -o "$out" 2>&1)"; then
         printf '%s\n' "$log" >&2
         erro "ERRO" "nasm falhou em: $fonte"
     fi
@@ -116,9 +149,12 @@ montar_iso() {
     local rel_ger="$INICIO/$NOME_GER"
     local alvo_nuc="$DIR_NUC/$NOME_NUC"
     local rel_nuc="$NUCLEO/$NOME_NUC"
+    local alvo_drv="$DIR_MOTOR/$NOME_DRV"
+    local rel_drv="$MOTOR/$NOME_DRV"
 
     rm -f "$ISO"
-    printf '  iso  %s\n' "$alvo_mbr + $alvo_ger + $alvo_nuc -> $(basename "$ISO")"
+    printf '  iso  %s + %s + %s + %s -> %s\n' \
+        "$alvo_mbr" "$alvo_ger" "$alvo_nuc" "$alvo_drv" "$(basename "$ISO")"
 
     # -graft-points     monta a ISO do fonte, sem pasta de staging
     # -b                boot image -> inicio/inimin.mai
@@ -134,7 +170,8 @@ montar_iso() {
         -J -R -V "MAISUS" \
         "/$alvo_mbr=$rel_mbr" \
         "/$alvo_ger=$rel_ger" \
-        "/$alvo_nuc=$rel_nuc" ) 2>/dev/null \
+        "/$alvo_nuc=$rel_nuc" \
+        "/$alvo_drv=$rel_drv" ) 2>/dev/null \
         || erro "ERRO" "genisoimage falhou"
 
     [ -f "$ISO" ] || erro "ERRO" "ISO nao foi criada: $ISO"
@@ -164,6 +201,8 @@ main() {
     ensamblar "$INICIO" "$FONTE_MBR" "$NOME_MBR"
     ensamblar "$INICIO" "$FONTE_GER" "$NOME_GER"
     ensamblar "$NUCLEO" "$FONTE_NUC" "$NOME_NUC"
+    ensamblar "$MOTOR" "$FONTE_DRV" "$NOME_DRV"
+    mapa
     printf '\n'
 
     printf '%s[2/3] a montar a ISO%s\n' "$TITULO" "$FIM"
