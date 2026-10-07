@@ -1,4 +1,6 @@
-# MaiSus 🖥️
+# MaiSus
+
+<img width="1254" height="1254" alt="image" src="https://github.com/user-attachments/assets/e35dcc5e-ae64-46ba-b70d-bef2d826120e" />
 
 > Um sistema operacional construído do zero em 100% Assembly para x86-64
 
