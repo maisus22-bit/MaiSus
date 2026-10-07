@@ -4,7 +4,7 @@
 
 > An operating system built from scratch in 100% Assembly for x86-64.
 
-![Version](https://img.shields.io/badge/version-0.1%20Beta-blue.svg)
+![Version](https://img.shields.io/badge/version-0.1-blue.svg)
 ![Language](https://img.shields.io/badge/language-Assembly-red.svg)
 ![Build](https://img.shields.io/badge/build-0.x.2026-brightgreen.svg)
 
