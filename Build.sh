@@ -2,12 +2,16 @@
 # ============================================================================
 #  Maisus - Build.sh
 #
-#  1. Ensambla os quatro estagios:
-#        inicio/inicio_minimo.asm  ->  inicio/inimin.mai   (setor 0 / boot)
-#        inicio/inicio.asm         ->  inicio/inicio.mai  (gerenciador)
-#        nucleo/nucleo.asm         ->  nucleo/0.4.2026    (nucleo)
-#        drivers/video.asm         ->  drivers/video.dr    (driver de video)
-#  2. Monta a ISO (sem GRUB, sem isolinux) com os quatro ficheiros
+#  1. Ensambla os seis estagios:
+#        inicio/inicio_minimo.asm    ->  inicio/inimin.mai   (setor 0 / boot)
+#        inicio/inicio.asm           ->  inicio/inicio.mai  (gerenciador)
+#        nucleo/nucleo.asm           ->  nucleo/0.5.2026    (nucleo)
+#        drivers/video.asm           ->  drivers/video.dr    (driver de video)
+#        interface/interface.asm     ->  interface/face.grain (interface grafica)
+#        interface/barra_inferrior.asm
+#                                     ->  interface/barinf.grain (barra inferior,
+#                                        executada pelo face.grain)
+#  2. Monta a ISO (sem GRUB, sem isolinux) com os ficheiros
 #  3. Lanca o QEMU com a ISO
 #
 #  Nao existe pasta de staging: a ISO e montada com -graft-points, directement
@@ -33,7 +37,7 @@ ISO="$RAIZ/Maisus.iso"
 # Vive num sitio so. O nome do binario do nucleo dentro da ISO e o proprio
 # numero do build, por isso mudar esta linha muda o nome do ficheiro procurado
 # no disco: e o inicio.asm que tem de saber que versao se esta a arrancar.
-BUILD="0.4.2026"
+BUILD="0.5.2026"
 
 # --- nomes ------------------------------------------------------------------
 # sao dois ficheiros separados: um fonte e um binario para cada estagio
@@ -42,12 +46,18 @@ NOME_MBR="inimin.mai"             # binario: dentro e fora da ISO
 FONTE_GER="inicio.asm"            # fonte do gerenciador de boot
 NOME_GER="inicio.mai"             # binario: dentro e fora da ISO
 FONTE_NUC="nucleo.asm"            # fonte do nucleo
-NOME_NUC="$BUILD"                 # binario: "0.4.2026", dentro e fora da ISO
+NOME_NUC="$BUILD"                 # binario: "0.5.2026", dentro e fora da ISO
 FONTE_DRV="video.asm"             # fonte do driver de video
 NOME_DRV="video.dr"               # binario: dentro e fora da ISO
+FONTE_INT="interface.asm"         # fonte da interface grafica
+NOME_INT="face.grain"             # binario: dentro e fora da ISO
+FONTE_BAR="barra_inferrior.asm"   # fonte da barra inferior
+NOME_BAR="barinf.grain"           # binario: dentro e fora da ISO
 DIR_ISO="inicio"                       # pasta dos binarios dentro da ISO
 DIR_NUC="nucleo"                       # pasta do nucleo dentro da ISO
 DIR_MOTOR="drivers"                    # pasta dos drivers dentro da ISO
+DIR_INT="interface"                    # pasta da interface dentro da ISO
+INTERFACE="$RAIZ/interface"              # pasta da interface
 
 # --- nivel de ISO9660 -------------------------------------------------------
 # 4 = os identificadores vao para o disco tal e qual: minusculas e SEM ";1".
@@ -151,17 +161,26 @@ montar_iso() {
     local rel_nuc="$NUCLEO/$NOME_NUC"
     local alvo_drv="$DIR_MOTOR/$NOME_DRV"
     local rel_drv="$MOTOR/$NOME_DRV"
+    local alvo_int="$DIR_INT/$NOME_INT"
+    local rel_int="$INTERFACE/$NOME_INT"
+    local alvo_bar="$DIR_INT/$NOME_BAR"
+    local rel_bar="$INTERFACE/$NOME_BAR"
 
     rm -f "$ISO"
-    printf '  iso  %s + %s + %s + %s -> %s\n' \
-        "$alvo_mbr" "$alvo_ger" "$alvo_nuc" "$alvo_drv" "$(basename "$ISO")"
+
+    printf '  iso  %s + %s + %s + %s + %s + %s -> %s\n' \
+        "$alvo_mbr" "$alvo_ger" "$alvo_nuc" "$alvo_drv" "$alvo_int" "$alvo_bar" \
+        "$(basename "$ISO")"
 
     # -graft-points     monta a ISO do fonte, sem pasta de staging
     # -b                boot image -> inicio/inimin.mai
-    # -no-emul-boot     a BIOS carrega os sectores tal e qual
+    # -no-emul-boot     a BIOS carrega os sectores tal e quais
     # -boot-load-size   4 sectores = 2048 bytes de espaco para o loader
     # (o genisoimage gera o boot.catalog sozinho: nao ha GRUB nem isolinux)
     # -iso-level        os nomes vao para o disco tal e qual (ver NIVEL_ISO)
+    #
+    # A interface e a barra vao para a mesma pasta da ISO (interface/): e o
+    # inicio.mai que as procura la pelas strings exatas, uma de cada vez.
     ( cd "$RAIZ" && "$GENISOIMAGE" -quiet -o "$ISO" \
         -graft-points \
         -iso-level "$NIVEL_ISO" \
@@ -171,7 +190,9 @@ montar_iso() {
         "/$alvo_mbr=$rel_mbr" \
         "/$alvo_ger=$rel_ger" \
         "/$alvo_nuc=$rel_nuc" \
-        "/$alvo_drv=$rel_drv" ) 2>/dev/null \
+        "/$alvo_drv=$rel_drv" \
+        "/$alvo_int=$rel_int" \
+        "/$alvo_bar=$rel_bar" ) 2>/dev/null \
         || erro "ERRO" "genisoimage falhou"
 
     [ -f "$ISO" ] || erro "ERRO" "ISO nao foi criada: $ISO"
@@ -202,6 +223,8 @@ main() {
     ensamblar "$INICIO" "$FONTE_GER" "$NOME_GER"
     ensamblar "$NUCLEO" "$FONTE_NUC" "$NOME_NUC"
     ensamblar "$MOTOR" "$FONTE_DRV" "$NOME_DRV"
+    ensamblar "$INTERFACE" "$FONTE_INT" "$NOME_INT"
+    ensamblar "$INTERFACE" "$FONTE_BAR" "$NOME_BAR"
     mapa
     printf '\n'
 
