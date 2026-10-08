@@ -239,10 +239,10 @@ MEN_SEG    equ MEN_LIN >> 4    ; 0x5000 - o segmento que o barsup.grain salta
 ; que fica abaixo do inicio.mai e a janela de video e o sector 0.
 ;
 ; O REC_SET e o maximo de sectores que se leem num ficheiro. Dois sectores
-; (4 KiB) chegam para um ecra de texto e sao o dobro do que esta imagem ocupa
-; hoje (77 bytes) - a mesma razao do decodificador (DEC_SET): a margem existe
-; para o inicio.mai poder carregar sectores inteiros sem o resto do sector ter
-; de ser initialization data.
+; (4 KiB) chegam de sobra para um ecra de texto interativo e deixam a imagem
+; (726 bytes hoje) longe do limite - a mesma razao do decodificador (DEC_SET): a
+; margem existe para o inicio.mai poder carregar sectores inteiros sem o resto
+; do sector ter de ser initialization data.
 REC_LIN    equ 0x9000          ; endereco linear da recuperacao
 REC_SEG    equ REC_LIN >> 4    ; 0x0900 - o segmento que este sector salta
 REC_SET    equ 2              ; sectores maxima do recu.mai (2 x 2048 = 4 KiB)
@@ -991,7 +991,7 @@ pronto:
     ; escolha onde se possa carregar um ficheiro da ISO sem voltar a trocar o DS
     ; e repor o contexto - e repor o contexto aqui, no meio de uma cadeia de
     ; "call ficheiro_*" que ja passou, seria mais codigo e mais sitio para
-    ; dar errado do que a propria imagem ocupa (77 bytes).
+    ; dar errado do que a propria imagem ocupa (726 bytes).
     ;
     ; O preco e que a recuperacao e carregada mesmo quando ninguem escolheu a
     ; recuperacao - o mesmo preco que o nucleo paga quando se sai, e que a
