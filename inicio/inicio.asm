@@ -6,9 +6,10 @@
 ;  Convencao de entrada: CS=IP=BASE, DS=BASE, ES=0x0000.
 ;
 ;  missao: escrever a versao do build, esperar 4 segundos, carregar da ISO o
-;          nucleo (/nucleo/0.4.2026) e o driver de video (/drivers/video.dr), e
-;          entregar o controlo ao nucleo.
-;  saida: nucleo (0.4.2026)
+;          nucleo (/nucleo/0.5.2026), o driver de video (/drivers/video.dr) e a
+;          interface (/interface/face.grain) com a barra inferior que ela
+;          executa (/interface/barinf.grain), e entregar o controlo ao nucleo.
+;  saida: nucleo (0.5.2026)
 ;
 ;  O nucleo entra sem levar nada na mao: os dois ficheiros ja estao na memoria
 ;  nos sitios onde ele vai buscar (as constantes de nucleo.asm). A espera de 4
@@ -31,11 +32,26 @@ ATRIB      equ 0x0E            ; amarelo claro sobre preto
 NUC_LIN    equ 0xC000          ; endereco linear do nucleo
 NUC_SEG    equ NUC_LIN >> 4    ; 0xC00
 
-; O driver de video vai para 0xE000, que nao choca com o nucleo (que no maximo
-; ocupa 32 KiB a partir de 0xC000, ate 0xD3FF). O driver chama-se a si mesmo
-; pelo segmento 0xE00, e por isso que a imagem dele e ligada para esse segmento.
+; Endereco LINEAR onde o driver de video e carregado, e o segmento
+; correspondente. Sao dois numeros diferentes e confundir-los e o erro classico
+; do modo real: o segmento 0xE00 cobre 0xE000, mas o segmento 0xE000 cobre
+; 0xE0000 (896 KiB). O driver chama-se a si mesmo pelo segmento 0xE00, e por isso
+; que a imagem dele e ligada para esse segmento.
 DRV_LIN    equ 0xE000          ; endereco linear do driver
 DRV_SEG    equ DRV_LIN >> 4    ; 0xE00
+
+; A barra inferior segue a mesma regra, dois segmentos acima da interface: o
+; face.grain vive em 0x2000:0x0000 e a barra em 0x3000:0x0000, por isso nenhum
+; dos dois pode estar a ser executado de cima do outro. Os dois sitios estao na
+; memoria convencional livre (abaixo de 0xA000), longe do framebuffer, que num
+; modo VESA vive bem acima de 1 MiB.
+;
+; O numero e o endereco LINEAR, como o do nucleo e o do driver: o segmento de
+; destino e o linear dividido por 16 (0x30000 >> 4 = 0x3000). Escrever 0x3000
+; aqui punha a barra em 0x3000:0x0000, isto e, no linear 0x3000, e o face.grain
+; saltava para um segmento vazio.
+BAR_LIN    equ 0x30000         ; endereco linear da barra
+BAR_SEG    equ BAR_LIN >> 4    ; 0x3000 - o segmento que o face.grain salta
 
 BLOCO      equ 2048           ; bytes por sector logico (ISO9660 / El Torito)
 PVD_LBA    equ 16             ; a norma obriga o 1.o descritor a estar aqui
@@ -43,6 +59,7 @@ PVD_TIPO   equ 1              ; tipo 1 = volume descriptor primario
 MAX_DESCR  equ 16             ; quantos descritores se procuram no maximo
 NUC_SET    equ 16             ; sectores maxima do nucleo (16 x 2048 = 32 KiB)
 DRV_SET    equ 2              ; sectores maxima do driver (2 x 2048 = 4 KiB)
+BAR_SET    equ 4              ; sectores maxima da barra (4 x 2048 = 8 KiB)
 N_UNIDADES equ 3              ; unidades na tabela de tentativas do sector 0
 
 ; Quanto tempo o numero do build fica no ecra antes de o controlo passar ao
@@ -146,6 +163,18 @@ start:
     call ficheiro_driver
     jc  falha
 
+    ; --- a interface: /interface/face.grain ------------------------------
+    call ficheiro_interface
+    jc  falha
+
+    ; --- a barra inferior: /interface/barinf.grain --------------------------
+    ; A barra vai na mesma caminhada que a interface e na mesma pasta da ISO,
+    ; mas para outro sitio da memoria: o face.grain salta para ela depois de
+    ; pintar o ecra, e nenhum dos dois pode estar a ser executado de cima do
+    ; outro.
+    call ficheiro_barra
+    jc  falha
+
 ; ---------------------------------------------------------------------------
 ; entregar o controlo ao nucleo
 ; ---------------------------------------------------------------------------
@@ -181,6 +210,56 @@ ficheiro_nucleo:
     mov ax, NUC_SEG
     mov [dest_seg], ax
     mov word [max_set], NUC_SET
+    jmp carregar_ficheiro
+.falha:
+    stc
+    ret
+
+; ---------------------------------------------------------------------------
+; ficheiro_interface: procura /interface/face.grain no volume e carrega-o em memoria
+;   saida: CF=1 se nao encontrar ou se a leitura falhar
+; ---------------------------------------------------------------------------
+ficheiro_interface:
+    mov si, DIR_INTERFACE
+    mov cx, DIR_I
+    call abrir_raiz
+    jc  .falha
+    call ler_directorio
+    jc  .falha
+    mov si, FIC_INTERFACE
+    mov cx, FIC_I
+    call achar_ficheiro
+    jc  .falha
+    mov ax, 0x2000                ; face.grain fica em 0x2000:0x0000 (linear 0x20000)
+    mov [dest_seg], ax
+    mov word [max_set], 16        ; espaco de sobra: a interface e de 1 sector
+    jmp carregar_ficheiro
+.falha:
+    stc
+    ret
+
+; ---------------------------------------------------------------------------
+; ficheiro_barra: procura /interface/barinf.grain no volume e carrega-o em BAR_SEG
+;   saida: CF=1 se nao encontrar ou se a leitura falhar
+;
+;   O nome procurado e o mesmo ficheiro que o Build.sh graftou na ISO; e o
+;   face.grain que verifica a assinatura da imagem carregada antes de saltar
+;   para ela, por isso aqui basta achar o ficheiro e coloca-lo no sitio.
+; ---------------------------------------------------------------------------
+ficheiro_barra:
+    mov si, DIR_INTERFACE
+    mov cx, DIR_I
+    call abrir_raiz
+    jc  .falha
+    call ler_directorio
+    jc  .falha
+    mov si, FIC_BARRA
+    mov cx, FIC_B
+    call achar_ficheiro
+    jc  .falha
+    mov ax, BAR_SEG
+    mov [dest_seg], ax
+    mov word [max_set], BAR_SET
     jmp carregar_ficheiro
 .falha:
     stc
@@ -442,16 +521,25 @@ dest_seg:    dw 0x0000        ; segmento de destino de carregar_ficheiro
 max_set:     dw 0x0000        ; sectores maxima de carregar_ficheiro
 
 DIR_NUCLEO:  db "nucleo", 0          ; 7 bytes
-FIC_NUCLEO:  db "0.4.2026", 0        ; 9 bytes
+FIC_NUCLEO:  db "0.5.2026", 0        ; 9 bytes
 
 DIR_N        equ 6
-FIC_N        equ 8                    ; "0.4.2026"
+FIC_N        equ 8                    ; "0.5.2026"
 
 DIR_MOTOR:   db "drivers", 0          ; 8 bytes
 FIC_MOTOR:   db "video.dr", 0         ; 9 bytes
 
 DIR_M        equ 7
 FIC_M        equ 8                    ; "video.dr"
+
+DIR_INTERFACE: db "interface", 0       ; 10 bytes
+FIC_INTERFACE: db "face.grain", 0      ; 11 bytes
+
+DIR_I        equ 9
+FIC_I        equ 10                   ; "face.grain"
+
+FIC_BARRA:   db "barinf.grain", 0      ; 13 bytes
+FIC_B        equ 12                   ; "barinf.grain"
 
 DAP:
 DAP_size:    db 0x10
@@ -463,7 +551,7 @@ dap_lba:     dq 0x0000000000000000
 
 SEG_BUF      equ BUF >> 4
 
-VERSAO:   db "Maisus v0.1 Build 0.4.2026"
+VERSAO:   db "Maisus v0.1 Build 0.5.2026"
 VERSAO_N  equ $ - VERSAO
 
 ; ---------------------------------------------------------------------------
