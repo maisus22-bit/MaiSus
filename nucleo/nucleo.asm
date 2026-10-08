@@ -1,8 +1,8 @@
 ; ============================================================================
 ;  Maisus - nucleo.asm
-;  Nucleo (kernel) - build 0.4.2026
+;  Nucleo (kernel) - build 0.5.2026
 ;
-;  Carregado por inicio.mai da ISO (/nucleo/0.4.2026) para SEG_NUC:0x0000.
+;  Carregado por inicio.mai da ISO (/nucleo/0.5.2026) para SEG_NUC:0x0000.
 ;  O inicio.mai carrega tambem o driver de video (/drivers/video.dr) para
 ;  SEG_DRV:DRV_INI (0x0008, depois do cabecalho de 8 bytes).
 ;  Convencao de entrada: CS=IP=0xC000, DS=ES=0xC000, pilha limpa em PILHA.
@@ -229,12 +229,17 @@ start:
     call limpar_video
     call mensagem
 
-; ---------------------------------------------------------------------------
-; ainda nao ha SO: a mensagem fica no ecra e o CPU espera
-; ---------------------------------------------------------------------------
-parado:
-    hlt
-    jmp parado
+    ; --- espera 4 segundos apos mostrar "video.dr configurado com sucesso" -----
+    mov cx, ESPERA_US >> 16
+    mov dx, ESPERA_US & 0xFFFF
+    mov ah, 0x86
+    int 0x15
+
+    ; --- passa o controle para face.grain (interface.asm compilado) ------------
+    ; face.grain foi carregado por inicio.asm em 0x20000 (segmento 0x2000)
+    push 0x2000
+    push 0x0000
+    retf
 
 ; ---------------------------------------------------------------------------
 ; sem_driver / sem_modos / driver_falhou: ecra vermelho e a explicacao. O
@@ -258,6 +263,8 @@ erro:
     rep stosw
     mov bl, ATRIB
     call escreve_txt
+parado:
+    hlt
     jmp parado
 
 ; ---------------------------------------------------------------------------
@@ -643,7 +650,7 @@ melhor_tipo: dw 0
 glifo:      times GLIFO_N db 0x00  ; o caracter que se esta a desenhar
 GLIFO_VAZIO: times GLIFO_N db 0x00 ; o glifo de um caracter fora da fonte
 
-VERSAO:   db "0.4.2026", 0         ; o zero do fim e obrigatorio: escreve_txt
+VERSAO:   db "0.5.2026", 0         ; o zero do fim e obrigatorio: escreve_txt
                                    ; so para quando o encontra, e logo a seguir
                                    ; esta a MENSAGEM (sem zero, escrevia as duas)
 
