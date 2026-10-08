@@ -6,7 +6,7 @@
 
 ![Version](https://img.shields.io/badge/version-0.1-blue.svg)
 ![Language](https://img.shields.io/badge/language-Assembly-red.svg)
-![Build](https://img.shields.io/badge/Latest%20Build-0.4.2026-brightgreen.svg)
+![Build](https://img.shields.io/badge/Latest%20Build-0.5.2026-brightgreen.svg)
 
 ## About the Project
 
