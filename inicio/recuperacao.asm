@@ -93,6 +93,19 @@ LINHA_AJUDA  equ 1              ; "digite --ajuda-- para lista comandos ..."
 LINHA_PROMPT equ 2              ; ">" - a linha onde vai ficar a escrita
 LINHA_ULT    equ 24             ; a ultima das 25: abaixo dela ha de rolar
 
+; --- o limite da linha do terminal --------------------------------------------
+; A linha de comandos nao cresce sem fim: leva 20 caracteres escritos, e o ">"
+; do prompt nao conta para esse limite - o ">" e o desenho da linha, e a escrita
+; comeca na coluna seguinte. Cheia a linha, as teclas de letra deixam de escrever
+; (nao ha mudanca de linha): o cursor fica parado no fim, a seguir ao 20.o
+; caracter. O backspace liberta lugar outra vez, porque a conta e sobre pos_col.
+;
+; A conta e em colunas e nao um contador de caracteres: o prompt ocupa a coluna
+; 0, o 20.o caracter fica na coluna 20 e a coluna 21 (LINHA_FIM) e a primeira em
+; que ja nao entra nada - e por isso que o "cmp" e a LINHA_FIM e nao a LINHA_MAX.
+LINHA_MAX   equ 20              ; caracteres escritos por linha (o ">" nao conta)
+LINHA_FIM   equ LINHA_MAX + 1   ; a coluna 21: a primeira em que a linha esta cheia
+
 ; --- o driver de teclado ------------------------------------------------------
 ; O contrato e o de drivers/teclado.asm, campo a campo, e e o mesmo que o
 ; inicio.asm (carregar_teclado e le_tecla) e o nucleo.asm falam: os numeros
@@ -581,22 +594,23 @@ tratar_tecla:
 ; ---------------------------------------------------------------------------
 ; por_caracter: escreve um caracter na posicao actual e avanca
 ;   entrada: CL = o caracter
-;   altera:  as variaveis pos_lin/pos_col (e o ecra, e o cursor)
+;   altera:  pos_col (e o ecra, e o cursor)
 ;
-;   O avanco e celula a celula, e o fim da linha e o fim do ecra sao os dois
-;   unicos casos: na coluna COLS desce uma linha, e na linha alem da ultima
-;   rola - que e o unico caminho para o ecra encher de texto a valer.
+;   O avanco e celula a celula, e o unico caso que para a escrita e o limite da
+;   linha: quando pos_col chega a LINHA_FIM ja estao escritos os LINHA_MAX
+;   caracteres da linha, e o caracter que se seguir nao entra. O cursor fica
+;   parado onde estava - no fim do que ja se escreveu - e nada muda de linha,
+;   que e o que se quer num terminal de comandos: uma linha, um comando.
+;
+;   Nao ha, portanto, nem mudanca de linha nem rolar por aqui. O rolar do ecra
+;   continua a existir, mas so quem carrega no enter o usa (e a unica altura em
+;   que o texto muda de linha). O por_celula por baixo escreve sempre: quem olha
+;   para o limite e esta rotina, e e por isso que o "cmp" vem antes.
 por_caracter:
+    cmp byte [pos_col], LINHA_FIM
+    jae .cursor                 ; a linha cheia: o caracter nao escreve nem avanca
     call por_celula
     inc byte [pos_col]
-    cmp byte [pos_col], COLS
-    jb  .cursor                 ; ainda ha coluna nesta linha
-    mov byte [pos_col], 0       ; acabou a linha: a de baixo, coluna zero
-    inc byte [pos_lin]
-    cmp byte [pos_lin], LINHA_ULT + 1
-    jb  .cursor                 ; ainda ha linha abaixo da ultima
-    call rolar_ecra             ; nao ha: o ecra rola e a escrita fica na
-    mov byte [pos_lin], LINHA_ULT ; ultima linha, coluna zero
 .cursor:
     call poer_cursor
     ret
