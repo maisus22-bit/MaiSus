@@ -204,7 +204,15 @@ start:
 .ler:
     cmp dword es:[bx], ASSINATURA
     jne .fora
+    ; O tirar usa o BX como indice dentro do buffer e por isso destroi-o; mas o
+    ; BX e a TEC_INFO de quem chamou, e e nela que a resposta vai escrita. Sem
+    ; isto a resposta cai no sitio errado - o BX ja vale 2, o deslocamento da
+    ; proxima tecla, e os campos vao parar a ES:0x0002, por cima do codigo de
+    ; quem chamou. Guarda-se e repoe-se: e o que o contrato promete (quem
+    ; chama conta com o BX depois de o driver sair).
+    push bx
     call tirar                  ; CF=0 e AX = prefixo:scancode; CF=1 vazio
+    pop bx
     jc  .vazio
     mov byte es:[bx + TI_TECLA], al
     mov byte es:[bx + TI_PREF], ah

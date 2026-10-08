@@ -34,10 +34,11 @@
 #  a partir dos binarios em inicio/, nucleo/, drivers/, interface/ e imagens/.
 #  Ao fechar a janela do QEMU, este comando termina.
 #
-#  O numero do build vive em tres sitios que tem de concordar: aqui, no nome do
-#  ficheiro que o inicio.asm procura dentro da ISO (FIC_NUCLEO) e na string que
-#  o nucleo escreve no ecra (VERSAO, em nucleo.asm). O script nao os arruma:
-#  muda-se a variavel BUILD e trata-se de actualizar os outros dois.
+#  O numero do build vive em quatro sitios que tem de concordar: aqui, no nome do
+#  ficheiro que o inicio.asm procura dentro da ISO (FIC_NUCLEO) e nas strings
+#  que o nucleo (VERSAO, em nucleo.asm) e o ecra de recuperacao (em
+#  recuperacao.asm) escrevem nos seus ecras. O script nao os arruma: muda-se a
+#  variavel BUILD e trata-se de actualizar os outros tres.
 # ============================================================================
 
 set -euo pipefail
@@ -195,14 +196,15 @@ mapa() {
 }
 
 # --- 1b. o numero do build, conferido nos binarios --------------------------
-#   O numero do build tem de concordar em tres sitios (ver a nota de la em cima):
-#   a variavel BUILD, o nome que o inicio.mai procura na ISO e o titulo que o
-#   nucleo escreve no ecra. A regra e escrita a mao e as tres coisas vivem em
-#   ficheiros diferentes, pelo que uma mudanca de build deixa sempre um sitio
-#   para esquecer - e o esquecimento nao se ve no build: assembla bem, a ISO
-#   monta bem, e o que falha e em silencio.
+#   O numero do build tem de concordar em quatro sitios (ver a nota de la em
+#   cima): a variavel BUILD, o nome que o inicio.mai procura na ISO e o titulo
+#   que o nucleo e o ecra de recuperacao escrevem nos ecras. A regra e escrita
+#   a mao e as quatro coisas vivem em ficheiros diferentes, pelo que uma
+#   mudanca de build deixa sempre um sitio para esquecer - e o esquecimento
+#   nao se ve no build: assembla bem, a ISO monta bem, e o que falha e em
+#   silencio.
 #
-#   Os dois silencios que aqui ficam apanhados:
+#   Os tres silencios que aqui ficam apanhados:
 #
 #     - o inicio.mai procura "0.9.2026" e o Build.sh meter "0.12.2026": a
 #       caminhada pela ISO nao acha o nucleo, e o arranque cai no ecra de
@@ -210,11 +212,14 @@ mapa() {
 #     - o nucleo escreve o titulo sem o numero: o titulo fica um bocado mais
 #       curto e o ecra parece o de sempre. Nao ha aviso nenhum - so de longe,
 #       a contar os caracteres.
+#     - o ecra de recuperacao escreve o titulo sem o numero: o topo fica um
+#       bocado mais curto e ninguem repara, a nao ser de longe, a contar os
+#       caracteres.
 #
 #   Por isso o build vai aos binarios ja assemblados e procura os bytes: no
-#   inicio.mai o nome que vai procurar, e no nucleo o titulo completo. E a
-#   verificacao a este nivel: os bytes que van para a ISO, e nao o
-#   texto dos fontes, que podem estar bem escritos e nao chegar ao binario.
+#   inicio.mai o nome que vai procurar, e no nucleo e no recu.mai o titulo
+#   completo. E a verificacao a este nivel: os bytes que vao para a ISO, e nao
+#   o texto dos fontes, que podem estar bem escritos e nao chegar ao binario.
 # --------------------------------------------------------------------------
 verificar_build() {
     # O prefixo do titulo e o VERSAO_LONG de nucleo/nucleo.asm. Nao e decorativo:
@@ -241,8 +246,17 @@ verificar_build() {
      sem nenhum aviso)."
     fi
 
-    printf '  build  %s concorda em %s, %s e %s\n' \
-        "$BUILD" "$NOME_GER" "$NOME_NUC" "nucleo.asm"
+    if ! grep -qa -- "$titulo_esperado" "$INICIO/$NOME_REC"; then
+        erro "BUILD" "o $NOME_REC nao contem o titulo completo:
+     \"$titulo_esperado\"
+     O ecra de recuperacao escreve esse titulo no topo. Ou o numero no
+     \"db\" do titulo (inicio/recuperacao.asm) nao e o $BUILD, ou o titulo
+     deixou de ser o prefixo colado ao numero (e entao o topo mostra o titulo
+     sem o numero, sem nenhum aviso)."
+    fi
+
+    printf '  build  %s concorda em %s, %s, %s e %s\n' \
+        "$BUILD" "$NOME_GER" "$NOME_NUC" "$NOME_REC" "nucleo.asm"
 }
 
 # --- 1c. a imagem do logo -----------------------------------------------------

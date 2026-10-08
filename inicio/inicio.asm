@@ -240,7 +240,7 @@ MEN_SEG    equ MEN_LIN >> 4    ; 0x5000 - o segmento que o barsup.grain salta
 ;
 ; O REC_SET e o maximo de sectores que se leem num ficheiro. Dois sectores
 ; (4 KiB) chegam de sobra para um ecra de texto interativo e deixam a imagem
-; (702 bytes hoje) longe do limite - a mesma razao do decodificador (DEC_SET): a
+; (799 bytes hoje) longe do limite - a mesma razao do decodificador (DEC_SET): a
 ; margem existe para o inicio.mai poder carregar sectores inteiros sem o resto
 ; do sector ter de ser initialization data.
 REC_LIN    equ 0x9000          ; endereco linear da recuperacao
@@ -351,6 +351,19 @@ PILHA      equ 0x7BFF
 ; ---------------------------------------------------------------------------
 start:
     cld
+
+    ; --- a escolha do menu recomeca do valor por omissao --------------------
+    ; O [escolha] e escrito pelo espera_enter e lido no fim da caminhada (ver a
+    ; nota dele). A area de dados nasce a ESC_NUCLEO, mas a memoria nao e
+    ; recarregada quando se volta ao start: e por aqui que o recu.mai regressa,
+    ; no comando "sair", e sem este "mov" o relogio que corre sem ninguem mexer
+    ; arrancava a recuperacao outra vez - a escolha da vez anterior ficava la.
+    ;
+    ; O DS e o segmento deste sector (BASE >> 4) na entrada - o inicio_minimo.asm
+    ; e o recu.mai poem-no la - por isso o deslocamento e "escolha - BASE". O
+    ; [escolha] sozinho e um endereco linear, que e o que o espera_enter usa por
+    ; escrever com DS=0 (ver a nota de la): os dois tem de dar a mesma celula.
+    mov byte [escolha - BASE], ESC_NUCLEO
 
     ; pilha propria: a do primeiro estagio ja nao serve
     xor ax, ax
@@ -991,7 +1004,7 @@ pronto:
     ; escolha onde se possa carregar um ficheiro da ISO sem voltar a trocar o DS
     ; e repor o contexto - e repor o contexto aqui, no meio de uma cadeia de
     ; "call ficheiro_*" que ja passou, seria mais codigo e mais sitio para
-    ; dar errado do que a propria imagem ocupa (702 bytes).
+    ; dar errado do que a propria imagem ocupa (799 bytes).
     ;
     ; O preco e que a recuperacao e carregada mesmo quando ninguem escolheu a
     ; recuperacao - o mesmo preco que o nucleo paga quando se sai, e que a

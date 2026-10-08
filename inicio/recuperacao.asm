@@ -73,6 +73,25 @@ ORG 0x0000
 ; cima explica porque e que os dois tem de ser o mesmo numero.
 SEG_IMG     equ 0x0900         ; 0x9000 >> 4
 
+; --- o caminho de volta ao gerenciador ----------------------------------------
+; O gerenciador de arranque (o inicio.mai) esta em 0xA000 desde o arranque e
+; nunca saiu de la: foi ele que carregou esta imagem e saltou para ca, e continua
+; a espera no mesmo sitio. O comando "sair" volta para o comeco dele - o "start",
+; no deslocamento 0 - e e o caminho ao contrario do "jmp SEG_IMG:entrada" com que
+; ele entrou aqui.
+;
+; Os numeros sao os do inicio.asm (BASE = 0xA000 e SEG_BASE = BASE >> 4) e a
+; mesma regra dos outros contratos: os dois lados tem de concordar, e nenhum
+; deles e um endereco magico. O inicio.mai e carregado e saltado pelo
+; inicio_minimo.asm com "jmp 0x0000:0xA000" (CS=0, IP=0xA000), com DS=0x0A00 e
+; ES=0 - e esse o estado que o "sair" tem de repor, porque o "start" conta com
+; ele para escrever o titulo (o DS) e para a leitura da escolha (que cria ser
+; feita com DS=0). O GER_LIN e o endereco LINEAR; o GER_SEG e o segmento (o
+; mesmo valor num registo de segmento); e o GER_INI e o deslocamento de entrada.
+GER_LIN     equ 0xA000         ; o BASE do inicio.asm
+GER_SEG     equ GER_LIN >> 4   ; 0x0A00 - o SEG_BASE do inicio.asm
+GER_INI     equ 0x0000         ; o "start" do inicio.mai, no comeco da imagem
+
 ; --- o ecra de texto ---------------------------------------------------------
 ; O buffer de texto do modo 80x25 vive em 0xB800 (o mesmo VIDEO_BASE que o
 ; inicio_minimo.asm e o inicio.asm usam). Cada celula sao 2 bytes: o caracter e
@@ -530,12 +549,31 @@ tratar_tecla:
 .tem_caracter:
     test bl, bl                 ; zero = tecla sem letra (ctrl, alt, shift..)
     jz  .nada
+    ; Guarda o caracter no buffer do comando, que e o que o enter vai comparar
+    ; com o "sair". O cmd_n e o comprimento do buffer e serve de indice do
+    ; proximo byte; o limite e o mesmo da linha (LINHA_MAX), por isso o buffer
+    ; nunca cresce para alem da conta que o por_caracter tambem respeita. O
+    ; "sair" tem 4 caracteres: quando houver mais comandos, e este buffer que os
+    ; alimenta.
+    cmp byte [cmd_n], LINHA_MAX
+    jae .nada                   ; a linha cheia: nao entra mais nada no buffer
+    mov di, cmd_buf
+    mov al, [cmd_n]
+    xor ah, ah
+    add di, ax
+    mov [di], bl
+    inc byte [cmd_n]
     mov cl, bl                  ; o caracter a escrever
     call por_caracter
 .nada:
     ret
 
-    ; --- enter: a linha de baixo com outro ">" --------------------------------
+    ; --- enter: o comando, e depois a linha de baixo com outro ">" -----------
+    ; Antes de mudar de linha, o enter entrega o que esta escrito ao
+    ; tratar_comando: e ele que reconhece o "sair" e, nesse caso, nao volta -
+    ; salta para o menu do gerenciador. Um comando que ele nao conheca cai
+    ; aqui, e a linha nova segue como sempre.
+    ;
     ; E a mesma escrita de sempre - o ">" e um caracter como os outros, feito
     ; por_caracter, que avanca a coluna de 0 para 1: o cursor fica logo a
     ; seguir ao prompt sem uma conta nenhuma a mais.
@@ -548,6 +586,8 @@ tratar_tecla:
     ; ini_lin acompanha: e a linha onde comeca o prompt em que se escreve, e o
     ; backspace usa-a para saber onde parar (nao se come o ">").
 .enter:
+    call tratar_comando         ; o "sair" decide por aqui; o resto cai na linha nova
+    mov byte [cmd_n], 0         ; a linha nova comeca com o buffer do comando vazio
     inc byte [pos_lin]
     cmp byte [pos_lin], LINHA_ULT
     jbe .linha                  ; ainda ha linha de baixo
@@ -586,9 +626,56 @@ tratar_tecla:
     mov byte [pos_col], COLS - 1 ; linha de cima e onde se vai parar
 .sem_subir:
     dec byte [pos_col]
+    ; O caracter que se apaga sai tambem do buffer do comando, para o "sair" nao
+    ; ficar la depois de apagado. O cmd_n nunca desce de zero: e o chao do
+    ; backspace, que tambem nao come o ">" (a comparacao de cima ja parou).
+    cmp byte [cmd_n], 0
+    je  .sem_baixar
+    dec byte [cmd_n]
+.sem_baixar:
     mov cl, ' '
     call por_celula             ; o espaco tapa o caracter - e la sem avanco
     call poer_cursor            ; o cursor fica na celula apagada
+    ret
+
+; ---------------------------------------------------------------------------
+; tratar_comando: o que o enter faz com o que esta escrito
+;   entrada: cmd_buf e cmd_n, o comando da linha
+;   saida:   volta se o comando nao tem nada a fazer (a linha nova segue); se o
+;            comando e "sair", nao volta - salta para o menu do gerenciador
+;
+;   Compara-se primeiro o comprimento e so depois os bytes. E o comprimento que
+;   separa "sair" de "sairx" ou de um comando mais curto sem ter de olhar para o
+;   texto, e com os quatro certos ha uma unica comparacao - o "cmp dword" le os
+;   quatro bytes de uma vez. O "sair" esta no buffer por ordem de leitura (o 's'
+;   no offset 0) e o dword little-endian le-se ao contrario: 0x72696173 e
+;   's','a','i','r'.
+;
+;   Um comando que nao seja "sair" nao diz nada, ainda: cai na linha nova com o
+;   ">" de sempre, e e aqui que os proximos comandos entram quando os houver.
+tratar_comando:
+    cmp byte [cmd_n], 4
+    jne .fora
+    cmp dword [cmd_buf], 0x72696173   ; 's','a','i','r', por ordem de memoria
+    jne .fora
+
+    ; --- sair: de volta ao menu do gerenciador -----------------------------
+    ; O "jmp" e de segmento porque o CS muda: o gerenciador corre com CS=0 e
+    ; IP=GER_LIN (foi assim que o inicio_minimo.asm o entregou - ver a nota do
+    ; GER_LIN la em cima), e o DS tem de ser o segmento dele, que e o que o
+    ; "start" espera para escrever o titulo e o menu. O ES fica a zero, como no
+    ; arranque. A pilha, o modo de video e o ecra ficam por conta do "start", que
+    ; recomeca tudo - nao ha nada a limpar aqui.
+    ;
+    ; O "sti" e a mesma regra de todo o ficheiro: o "start" tem "hlt" na espera
+    ; e sem o IF a um o CPU parava para sempre.
+    sti
+    xor ax, ax
+    mov es, ax
+    mov ax, GER_SEG
+    mov ds, ax
+    jmp 0x0000:GER_LIN          ; CS=0 e IP=GER_LIN: o estado do arranque
+.fora:
     ret
 
 ; ---------------------------------------------------------------------------
@@ -747,6 +834,15 @@ rolar_ecra:
 pos_lin: db LINHA_PROMPT
 pos_col: db CURSOR_COL
 ini_lin: db LINHA_PROMPT
+
+; O comando escrito na linha actual. Os caracteres vao caindo no cmd_buf a
+; medida que sao escritos (e o backspace tira-os de la), e o cmd_n e o
+; comprimento: o indice do proximo byte e o que o enter compara com "sair". Sao
+; LINHA_MAX bytes, a mesma conta que a linha aceita - nao ha um segundo limite
+; para manter em sincronia - e o buffer nao precisa de terminador: quem o le
+; leva o cmd_n a frente. A entrada e sempre pela cabeca e o "sair" tem 4.
+cmd_buf: times LINHA_MAX db 0
+cmd_n:   db 0
 
 ; --- a TEC_INFO com que se fala com o driver -----------------------------------
 ; Os mesmos 12 bytes do TEC_INFO do inicio.asm e do nucleo.asm, com os mesmos
