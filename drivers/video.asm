@@ -1,6 +1,6 @@
 ; ============================================================================
 ;  Maisus - drivers/video.asm
-;  Driver de video - build 0.4.2026
+;  Driver de video - build 0.5.2026
 ;
 ;  Carregado por inicio.mai da ISO (/drivers/video.dr) para 0xE000. A entrada e
 ;  DRV_INI = 0x0008, logo depois do cabecalho de 8 bytes.
