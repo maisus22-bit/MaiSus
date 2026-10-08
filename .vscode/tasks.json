@@ -1,0 +1,32 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Maisus: build + QEMU",
+            "type": "shell",
+            "command": "bash ./Build.sh",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "NASM": "nasm",
+                    "GENISOIMAGE": "genisoimage",
+                    "QEMU": "qemu-system-x86_64",
+                    "QEMU_DISPLAY": "gtk"
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "clear": true,
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "revealProblems": "onProblem"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
