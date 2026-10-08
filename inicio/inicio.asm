@@ -240,7 +240,7 @@ MEN_SEG    equ MEN_LIN >> 4    ; 0x5000 - o segmento que o barsup.grain salta
 ;
 ; O REC_SET e o maximo de sectores que se leem num ficheiro. Dois sectores
 ; (4 KiB) chegam de sobra para um ecra de texto interativo e deixam a imagem
-; (799 bytes hoje) longe do limite - a mesma razao do decodificador (DEC_SET): a
+; (945 bytes hoje) longe do limite - a mesma razao do decodificador (DEC_SET): a
 ; margem existe para o inicio.mai poder carregar sectores inteiros sem o resto
 ; do sector ter de ser initialization data.
 REC_LIN    equ 0x9000          ; endereco linear da recuperacao
@@ -1004,7 +1004,7 @@ pronto:
     ; escolha onde se possa carregar um ficheiro da ISO sem voltar a trocar o DS
     ; e repor o contexto - e repor o contexto aqui, no meio de uma cadeia de
     ; "call ficheiro_*" que ja passou, seria mais codigo e mais sitio para
-    ; dar errado do que a propria imagem ocupa (799 bytes).
+    ; dar errado do que a propria imagem ocupa (945 bytes).
     ;
     ; O preco e que a recuperacao e carregada mesmo quando ninguem escolheu a
     ; recuperacao - o mesmo preco que o nucleo paga quando se sai, e que a

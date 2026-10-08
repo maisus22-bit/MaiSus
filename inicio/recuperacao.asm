@@ -18,10 +18,14 @@
 ;          titulo, o aviso do --ajuda--, o prompt ">" e o cursor a seguir) e o
 ;          que se junta agora e a leitura das teclas: o que se carrega no
 ;          teclado aparece depois do ">", o backspace apaga para tras e o enter
-;          desce uma linha e poe outro ">". Nao ha comandos - o "--ajuda--" e
-;          o resto vem no passo seguinte; por agora o terminal so escreve.
-;  saida: nada - o CPU fica no laco do terminal (dorme, atende a tecla,
-;         desenha) ate haver comandos para os quais existir uma saida
+;          desce uma linha e poe outro ">". O terminal tem dois comandos: o
+;          "--ajuda--" escreve a lista do que ele sabe fazer (por agora, o
+;          "sair") e o "sair" devolve o controlo ao menu do gerenciador - que
+;          desenha o ecra do topo outra vez, e a unica saida desta imagem.
+;          Qualquer outra coisa escreve-se, o enter aceita-a, e nada acontece:
+;          e o que um comando desconhecido faz.
+;  saida: o "sair", e so ele - o resto do tempo o CPU fica no laco do terminal
+;         (dorme, atende a tecla, desenha) ate essa tecla chegar
 ;
 ;  MODOS, E O PORQUE DESTE SER UM ECRA DE TEXTO E NAO UM COMO O RESTO
 ;  ---------------------------------------------------------------------------
@@ -49,11 +53,10 @@
 ;  o inicio.mai escreve (celula e celula, ver a rotina celula em inicio.asm), e
 ;  nao ha modo nenhum para por nem driver nenhum para chamar: e a memoria.
 ;
-;  O terminal nasce por partes, e a primeira parte e so o desenho: as tres
-;  linhas e o cursor. A leitura de teclas e os comandos (--ajuda-- e os que
-;  vierem a seguir) entram depois, por cima disto, sem ter de mexer no que ja
-;  esta feito - escrever no buffer de texto e uma conta, ler do teclado e
-;  outra, e as duas nao se estorvam.
+;  O terminal nasce por partes: as tres linhas e o cursor primeiro, e depois a
+;  leitura de teclas e os comandos por cima, sem ter de mexer no que ja esta
+;  feito - escrever no buffer de texto e uma conta, ler do teclado e outra, e
+;  as duas nao se estorvam.
 ; ============================================================================
 
 BITS 16
@@ -549,12 +552,11 @@ tratar_tecla:
 .tem_caracter:
     test bl, bl                 ; zero = tecla sem letra (ctrl, alt, shift..)
     jz  .nada
-    ; Guarda o caracter no buffer do comando, que e o que o enter vai comparar
-    ; com o "sair". O cmd_n e o comprimento do buffer e serve de indice do
+    ; Guarda o caracter no buffer do comando, que e o que o enter entrega ao
+    ; tratar_comando. O cmd_n e o comprimento do buffer e serve de indice do
     ; proximo byte; o limite e o mesmo da linha (LINHA_MAX), por isso o buffer
-    ; nunca cresce para alem da conta que o por_caracter tambem respeita. O
-    ; "sair" tem 4 caracteres: quando houver mais comandos, e este buffer que os
-    ; alimenta.
+    ; nunca cresce para alem da conta que o por_caracter tambem respeita. E o
+    ; cmd_n que separa os comandos: o "sair" tem 4 caracteres e o "--ajuda--" 9.
     cmp byte [cmd_n], LINHA_MAX
     jae .nada                   ; a linha cheia: nao entra mais nada no buffer
     mov di, cmd_buf
@@ -570,30 +572,26 @@ tratar_tecla:
 
     ; --- enter: o comando, e depois a linha de baixo com outro ">" -----------
     ; Antes de mudar de linha, o enter entrega o que esta escrito ao
-    ; tratar_comando: e ele que reconhece o "sair" e, nesse caso, nao volta -
-    ; salta para o menu do gerenciador. Um comando que ele nao conheca cai
-    ; aqui, e a linha nova segue como sempre.
+    ; tratar_comando: e ele que reconhece o "sair" (e nao volta - salta para o
+    ; menu do gerenciador) e o "--ajuda--" (escreve a lista de comandos e volta
+    ; aqui). Um comando que ele nao conheca cai aqui, e a linha nova segue como
+    ; sempre.
     ;
     ; E a mesma escrita de sempre - o ">" e um caracter como os outros, feito
     ; por_caracter, que avanca a coluna de 0 para 1: o cursor fica logo a
     ; seguir ao prompt sem uma conta nenhuma a mais.
     ;
-    ; O que nao ha e uma linha de baixo quando se esta na ultima: entao tudo
-    ; sobe uma linha (rolar_ecra) e a escrita la fica na ultima. E por isto que
-    ; o "cmp" e ao LINHA_ULT e nao ao fim do buffer - o ecra e que se mexe, as
-    ; variaveis nao andam para tras.
+    ; O descer de linha e o linha_seguinte de baixo: desce uma linha, e quando
+    ; se esta na ultima sobe o ecra todo (rolar_ecra) e a escrita la fica na
+    ; ultima. E por isto que o "cmp" e ao LINHA_ULT e nao ao fim do buffer - o
+    ; ecra e que se mexe, as variaveis nao andam para tras.
     ;
     ; ini_lin acompanha: e a linha onde comeca o prompt em que se escreve, e o
     ; backspace usa-a para saber onde parar (nao se come o ">").
 .enter:
-    call tratar_comando         ; o "sair" decide por aqui; o resto cai na linha nova
+    call tratar_comando         ; o "sair" e o "--ajuda--" decidem por aqui
     mov byte [cmd_n], 0         ; a linha nova comeca com o buffer do comando vazio
-    inc byte [pos_lin]
-    cmp byte [pos_lin], LINHA_ULT
-    jbe .linha                  ; ainda ha linha de baixo
-    call rolar_ecra             ; nao ha: tudo sobe e a escrita fica na ultima
-    mov byte [pos_lin], LINHA_ULT
-.linha:
+    call linha_seguinte         ; desce uma: a linha nova debaixo da que ficou
     mov byte [pos_col], 0       ; a coluna zero e onde vive o prompt
     mov cl, '>'
     call por_caracter
@@ -626,8 +624,8 @@ tratar_tecla:
     mov byte [pos_col], COLS - 1 ; linha de cima e onde se vai parar
 .sem_subir:
     dec byte [pos_col]
-    ; O caracter que se apaga sai tambem do buffer do comando, para o "sair" nao
-    ; ficar la depois de apagado. O cmd_n nunca desce de zero: e o chao do
+    ; O caracter que se apaga sai tambem do buffer do comando, para o comando
+    ; nao ficar la depois de apagado. O cmd_n nunca desce de zero: e o chao do
     ; backspace, que tambem nao come o ">" (a comparacao de cima ja parou).
     cmp byte [cmd_n], 0
     je  .sem_baixar
@@ -641,24 +639,37 @@ tratar_tecla:
 ; ---------------------------------------------------------------------------
 ; tratar_comando: o que o enter faz com o que esta escrito
 ;   entrada: cmd_buf e cmd_n, o comando da linha
-;   saida:   volta se o comando nao tem nada a fazer (a linha nova segue); se o
-;            comando e "sair", nao volta - salta para o menu do gerenciador
+;   saida:   se nao ha nada a fazer, volta (a linha nova segue no ".enter"); se
+;            e o "--ajuda--", escreve a lista de comandos e volta; se e o
+;            "sair", nao volta - salta para o menu do gerenciador
 ;
-;   Compara-se primeiro o comprimento e so depois os bytes. E o comprimento que
-;   separa "sair" de "sairx" ou de um comando mais curto sem ter de olhar para o
-;   texto, e com os quatro certos ha uma unica comparacao - o "cmp dword" le os
-;   quatro bytes de uma vez. O "sair" esta no buffer por ordem de leitura (o 's'
-;   no offset 0) e o dword little-endian le-se ao contrario: 0x72696173 e
-;   's','a','i','r'.
+;   Compara-se primeiro o comprimento e so depois os bytes. O comprimento
+;   separa o "sair" de "sairx" e o "--ajuda--" de "ajuda", sem ter de olhar
+;   para o texto, e com os caracteres certos ha uma comparacao por cada quatro
+;   bytes - o "cmp dword" le quatro de uma vez. Os dois comandos estao no
+;   buffer por ordem de leitura (o 's' do "sair" no offset 0, o '-' do
+;   "--ajuda--" o mesmo) e o dword little-endian le-se ao contrario: 0x72696173
+;   e 's','a','i','r', e 0x6A612D2D e '-','-','a','j'.
 ;
-;   Um comando que nao seja "sair" nao diz nada, ainda: cai na linha nova com o
-;   ">" de sempre, e e aqui que os proximos comandos entram quando os houver.
+;   Um comando que nao seja nenhum dos dois nao diz nada: cai na linha nova com
+;   o ">" de sempre - e e aqui que os proximos comandos entram, quando houver.
 tratar_comando:
     cmp byte [cmd_n], 4
-    jne .fora
+    jne .nao_sair
     cmp dword [cmd_buf], 0x72696173   ; 's','a','i','r', por ordem de memoria
+    je  .sair
+.nao_sair:
+    cmp byte [cmd_n], 9
     jne .fora
-
+    cmp dword [cmd_buf], 0x6A612D2D    ; '-','-','a','j': os primeiros quatro
+    jne .fora
+    cmp dword [cmd_buf + 4], 0x2D616475 ; 'u','d','a','-': os quatro seguintes
+    jne .fora
+    cmp byte [cmd_buf + 8], 0x2D        ; e o ultimo '-', que faz os nove
+    jne .fora
+    call mostra_ajuda                    ; a lista de comandos, linha a linha
+    ret                                  ; e o enter abre o prompt a seguir
+.sair:
     ; --- sair: de volta ao menu do gerenciador -----------------------------
     ; O "jmp" e de segmento porque o CS muda: o gerenciador corre com CS=0 e
     ; IP=GER_LIN (foi assim que o inicio_minimo.asm o entregou - ver a nota do
@@ -676,6 +687,80 @@ tratar_comando:
     mov ds, ax
     jmp 0x0000:GER_LIN          ; CS=0 e IP=GER_LIN: o estado do arranque
 .fora:
+    ret
+
+; ---------------------------------------------------------------------------
+; mostra_ajuda: a lista de comandos, debaixo da linha onde foram pedidos
+;   entrada: nada (as linhas sao as cadeias COMANDOS_*, no fim do ficheiro)
+;   saida:   nada - o enter abre a linha do prompt a seguir, por isso a ultima
+;            coisa que se ve e a lista e depois o ">" novo
+;
+;   O "--ajuda--" era aviso na segunda linha do ecra ("digite --ajuda-- para
+;   lista comandos disponiveis") e agora tambem e o comando que mostra o que o
+;   terminal sabe fazer. Escreve duas linhas, com a mesma conta das tres de
+;   cima (texto a coluna 0, com o ATRIB), e por enquanto a lista tem um comando
+;   so - o "sair". Quando houver mais comandos, ganham cada um a sua linha e
+;   nada neste laco muda.
+;
+;   As linhas da lista nao passam pela escrita do comando (o por_caracter para
+;   quando a linha de escrita chega aos LINHA_MAX caracteres, e a explicacao do
+;   "sair" e mais comprida) - escrevem directo no buffer com o escreve_linha,
+;   como o resto do texto desta imagem. O descer de linha e o mesmo esforco do
+;   enter, agora na linha_seguinte logo abaixo: a lista sobe com o ecra quando
+;   este enche, como qualquer outra linha escrita.
+mostra_ajuda:
+    call linha_seguinte         ; a primeira linha da lista (o cabecalho)
+    mov si, COMANDOS_TIT
+    mov cx, COMANDOS_TIT_N
+    call escreve_linha
+    call linha_seguinte         ; e a segunda (o "sair")
+    mov si, COMANDOS_SAIR
+    mov cx, COMANDOS_SAIR_N
+    call escreve_linha
+    ret
+
+; ---------------------------------------------------------------------------
+; linha_seguinte: desce o pos_lin uma linha, com o rolar na ultima
+;   saida: pos_lin e a linha de baixo; se ela nao existe (se se estava na
+;          LINHA_ULT), o ecra subiu uma e pos_lin fica na ultima
+;
+;   E o pedaco que o enter fazia por ele proprio, tirado para ca porque a ajuda
+;   tambem desce linhas antes de o enter descer a dele: o "--ajuda--" ocupa
+;   duas, e o prompt novo continua a ficar a seguir a elas. O rolar_ecra mexe
+;   no ini_lin (o chao do backspace) e esta certo: se o ecra subiu, a linha do
+;   prompt que esteve a servir subiu tambem, e o backspace so pode apagar o que
+;   esta abaixo dele.
+linha_seguinte:
+    inc byte [pos_lin]
+    cmp byte [pos_lin], LINHA_ULT
+    jbe .feito
+    call rolar_ecra             ; nao ha a linha de baixo: tudo sobe uma
+    mov byte [pos_lin], LINHA_ULT
+.feito:
+    ret
+
+; ---------------------------------------------------------------------------
+; escreve_linha: uma cadeia inteira na linha actual, a comecar na coluna 0
+;   entrada: SI = a cadeia (DS = SEG_IMG), CX = quantos caracteres
+;
+;   E o mesmo laco do escreve de cima, so que o DI vem da linha actual (o
+;   celula_di, com o pos_col a zero porque a lista comeca sempre no canto) em
+;   vez de ser uma linha fixa do topo do ecra. Nao passa pelo por_caracter: a
+;   lista nao e um comando a escrever, nao tem o limite da linha de escrita, e
+;   o cursor nao tem de a acompanhar caracter a caracter - o enter poe o cursor
+;   no ">" novo quando esta acabada.
+escreve_linha:
+    push ax
+    push di
+    mov byte [pos_col], 0
+    call celula_di              ; DI = o deslocamento da celula (pos_lin, 0)
+    mov ah, ATRIB
+.laco:
+    lodsb
+    stosw
+    loop .laco
+    pop di
+    pop ax
     ret
 
 ; ---------------------------------------------------------------------------
@@ -837,10 +922,11 @@ ini_lin: db LINHA_PROMPT
 
 ; O comando escrito na linha actual. Os caracteres vao caindo no cmd_buf a
 ; medida que sao escritos (e o backspace tira-os de la), e o cmd_n e o
-; comprimento: o indice do proximo byte e o que o enter compara com "sair". Sao
-; LINHA_MAX bytes, a mesma conta que a linha aceita - nao ha um segundo limite
-; para manter em sincronia - e o buffer nao precisa de terminador: quem o le
-; leva o cmd_n a frente. A entrada e sempre pela cabeca e o "sair" tem 4.
+; comprimento: o indice do proximo byte e o que o enter entrega ao
+; tratar_comando. Sao LINHA_MAX bytes, a mesma conta que a linha aceita - nao
+; ha um segundo limite para manter em sincronia - e o buffer nao precisa de
+; terminador: quem o le leva o cmd_n a frente. A entrada e sempre pela cabeca:
+; o "sair" tem 4 caracteres e o "--ajuda--" 9.
 cmd_buf: times LINHA_MAX db 0
 cmd_n:   db 0
 
@@ -937,6 +1023,21 @@ AJUDA_N equ $ - AJUDA            ; 48 caracteres
 PROMPT:
     db ">"
 PROMPT_N equ $ - PROMPT          ; 1 caracter (e a coluna onde nasce o cursor)
+
+; --- as cadeias da lista de comandos -------------------------------------------
+; O "--ajuda--" escreve estas duas linhas no ecra do terminal, uma de cada vez
+; (ver mostra_ajuda). A de cima e a cabeca da lista e a de baixo o primeiro -
+; e, por enquanto, unico - comando: o "sair", com a explicacao na mesma linha.
+; Os dois espacos no comeco da segunda sao a indentacao da lista. O
+; comprimento vem do mesmo "$ - rotulo" de cima, para o texto poder crescer
+; sem se mexer na conta.
+COMANDOS_TIT:
+    db "comandos disponiveis:"
+COMANDOS_TIT_N equ $ - COMANDOS_TIT   ; 21 caracteres
+
+COMANDOS_SAIR:
+    db "  sair - volta ao menu do gerenciador"
+COMANDOS_SAIR_N equ $ - COMANDOS_SAIR ; 38 caracteres
 
 ; ---------------------------------------------------------------------------
 ; O que nao e usado fica a zero: os "equ" nao ocupam espaco e o resto sao os
