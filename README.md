@@ -7,7 +7,7 @@
 ![Version](https://img.shields.io/badge/version-0.1-blue.svg)
 ![Language](https://img.shields.io/badge/language-Assembly-red.svg)
 ![Build](https://img.shields.io/badge/Latest%20Build-0.5.2026-brightgreen.svg)
-
+![Future Development Platform Build](https://img.shields.io/badge/Future--development--platform%20Build-0.13.2026-brightgreen.svg)
 ## About the Project
 
 **MaiSus** is an **independent** operating system built from scratch in x86-64 Assembly. It does not rely on any other system to function—it is a pure bare-metal implementation.
